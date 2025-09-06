@@ -1,1 +1,80 @@
-print("Master placeholder")
+local CFG_DEF = require("config_master")
+{key="distribute", label="Verteilung", type="text"},
+{key="page_interval", label="Page Intervall (s)", type="number"},
+{key="rows_per_page", label="Rows/Page", type="number"},
+{key="ramp_enabled", label="Ramp enabled", type="toggle"},
+{key="ramp_step", label="Ramp Step (mB/t)", type="number"},
+{key="ramp_interval", label="Ramp Interval (s)", type="number"},
+{key="ramp_floor_offset", label="Ramp Offset/Etage (s)", type="number"},
+{key="alarm_sound", label="Alarm Sound", type="toggle"},
+{key="alarm_rpm_low", label="Alarm RPM low", type="number"},
+{key="alarm_rpm_high", label="Alarm RPM high", type="number"},
+{key="alarm_floor_soc_low", label="Alarm Floor SoC low", type="number"},
+{key="main_storages", label="Hauptspeicher (Komma)", type="list"},
+}
+local work={}; for k,v in pairs(CFG) do work[k]=v end
+local res, data = require("gui").form("Master Konfiguration", spec, work)
+if res=="save" then
+for k,v in pairs(data) do CFG[k]=v end
+STO.save_json(CFG_PATH, CFG)
+rednet.close(); rednet.open(CFG.modem_side)
+end
+end
+
+
+-- RX
+local function rx_loop()
+while true do
+local id, msg = P.recv(1)
+if id and msg then
+if msg._auth ~= CFG.auth_token then -- Auth prüfen
+-- ignore
+else
+if msg.type=="HELLO" then
+nodes[id]=nodes[id] or {}
+nodes[id].floor = msg.floor
+nodes[id].caps = msg.caps or {}
+nodes[id].last = os.epoch("utc")
+nodes[id].ramp = {cur=0, next=os.clock() + (CFG.ramp_floor_offset*(msg.floor or 0))}
+P.send(id, {type="HELLO_ACK", master_id=os.getComputerID(), cfg={rpm_target=CFG.rpm_target}}, CFG.auth_token)
+elseif msg.type=="TELEM" then
+nodes[id]=nodes[id] or {}
+nodes[id].telem = msg
+nodes[id].last = os.epoch("utc")
+end
+end
+end
+-- timeouts markieren
+for nid,n in pairs(nodes) do
+if (os.epoch("utc")-(n.last or 0))/1000 > (CFG.telem_timeout or 10) then n.offline = true else n.offline=false end
+end
+end
+end
+
+
+local function ctrl_loop()
+while true do
+local soc = read_main_soc() or CFG.soc_target
+local total = soc_to_steam_target(soc)
+distribute(total)
+apply_ramp()
+push_setpoints()
+draw()
+sleep(CFG.setpoint_interval or 5)
+end
+end
+
+
+parallel.waitForAny(
+rx_loop,
+ctrl_loop,
+function()
+while true do
+local e,k = os.pullEvent("key")
+if k==keys.f1 then do_config();
+elseif k==keys.pageup then page_idx = math.max(1, page_idx-1)
+elseif k==keys.pagedown then page_idx = page_idx + 1
+elseif k==keys.q or k==keys.escape then term.redirect(scr); term.clear(); term.setCursorPos(1,1); return end
+end
+end
+)
