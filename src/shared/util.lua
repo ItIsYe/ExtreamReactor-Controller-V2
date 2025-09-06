@@ -1,0 +1,1 @@
+local U={}; function U.clamp(x,a,b) if x<a then return a elseif x>b then return b else return x end end; return U

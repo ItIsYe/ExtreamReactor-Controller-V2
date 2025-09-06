@@ -1,0 +1,1 @@
+local G={}; function G.attach() term.clear() return term.current() end; function G.form(t,s,d) return "save", d end; return G

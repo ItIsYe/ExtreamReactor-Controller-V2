@@ -1,0 +1,1 @@
+return {modem_side="right",auth_token="changeme",floor=1}
