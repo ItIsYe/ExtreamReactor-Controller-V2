@@ -1,7 +1,4 @@
 -- Extreme Reactor Controller – Startup
--- Startet beim Booten automatisch Master oder Node.
--- Erste Ausführung: fragt Rolle ab und merkt sie sich in /xreactor/role.txt
-
 local baseDir   = "/xreactor"
 local roleFile  = baseDir.."/role.txt"
 local exec = { master = baseDir.."/master", node = baseDir.."/node" }
@@ -56,7 +53,6 @@ local function runRole(r)
   end
 end
 
--- --- Main ---
 local role = loadRole()
 if not role then
   role = chooseRole()
@@ -64,4 +60,3 @@ if not role then
   saveRole(role)
 end
 runRole(role)
-
