@@ -1,21 +1,18 @@
 -- ===== Master Controller =====
--- Suchpfad erweitern, damit require() Module in /xreactor und /xreactor/shared gefunden werden
 package.path = package.path .. ";/xreactor/?.lua;/xreactor/shared/?.lua;/xreactor/?/init.lua"
 
 local GUI = require("gui")
 local STO = require("storage")
 local P   = require("protocol")
 
--- Pfad für die Config
 local CFG_PATH = "/xreactor/config_master.lua"
 
--- Globale Tabellen
 local CFG  = {}
 local nodes = {}
 local page_idx = 1
 local scr = term.current()
 
--- === STUBS: später durch echte Logik ersetzen ===
+-- === STUBS (werden später ersetzt) ===
 function read_main_soc()
   return (CFG and CFG.soc_target) or 0.5
 end
@@ -28,12 +25,22 @@ function distribute(total) end
 function apply_ramp() end
 function push_setpoints() end
 
+-- === Neue draw()-Funktion ===
 function draw()
   term.setCursorPos(1,1); term.clear()
-  print("Master online (Stub)")
+  print("Master online")
   print("Nodes verbunden: "..tostring(#nodes))
+
+  local y = 4
+  for id,n in pairs(nodes) do
+    term.setCursorPos(1,y)
+    local status = n.offline and "OFFLINE" or "ONLINE"
+    local last = n.last and math.floor((os.epoch("utc") - n.last)/1000).."s" or "?"
+    print(string.format("Node %d | Floor %s | %s | Last: %s",
+      id, tostring(n.floor or "?"), status, last))
+    y = y + 1
+  end
 end
--- === /STUBS ===
 
 -- === Konfigurations-Dialog ===
 local function do_config()
@@ -69,13 +76,13 @@ local function do_config()
   end
 end
 
--- === RX-Loop (Empfang von Nodes) ===
+-- === RX-Loop ===
 local function rx_loop()
   while true do
     local id, msg = P.recv(1)
     if id and msg then
       if msg._auth ~= CFG.auth_token then
-        -- falscher Token -> ignorieren
+        -- ignore
       else
         if msg.type=="HELLO" then
           nodes[id]=nodes[id] or {}
@@ -93,7 +100,6 @@ local function rx_loop()
       end
     end
 
-    -- Timeouts markieren
     for nid,n in pairs(nodes) do
       if (os.epoch("utc")-(n.last or 0))/1000 > (CFG.telem_timeout or 10) then
         n.offline = true
@@ -117,7 +123,7 @@ local function ctrl_loop()
   end
 end
 
--- === Tastatursteuerung / Menü ===
+-- === Key-Loop ===
 local function key_loop()
   while true do
     local e,k = os.pullEvent("key")
@@ -134,7 +140,6 @@ local function key_loop()
   end
 end
 
--- === Haupt-Parallel-Start ===
 parallel.waitForAny(
   rx_loop,
   ctrl_loop,
