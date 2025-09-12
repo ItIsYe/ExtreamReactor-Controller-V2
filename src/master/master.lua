@@ -11,7 +11,7 @@ local CFG_DEF = require("config_master")
 {key="alarm_rpm_high", label="Alarm RPM high", type="number"},
 {key="alarm_floor_soc_low", label="Alarm Floor SoC low", type="number"},
 {key="main_storages", label="Hauptspeicher (Komma)", type="list"},
-}
+
 local work={}; for k,v in pairs(CFG) do work[k]=v end
 local res, data = require("gui").form("Master Konfiguration", spec, work)
 if res=="save" then
