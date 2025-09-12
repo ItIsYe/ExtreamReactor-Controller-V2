@@ -1,31 +1,36 @@
-local M = {}
-M.PROTO = "xreactor.net.v2"
+-- protocol.lua – einfache Wrapper für rednet, plus Konstanten
 
+local protocol = {}
 
-local function has_json() return textutils.serializeJSON and textutils.unserializeJSON end
+protocol.MSG = {
+  HELLO   = "HELLO",
+  HELLO_ACK = "HELLO_ACK",
+  TELEM   = "TELEM",
+  COMMAND = "COMMAND",
+}
 
-
-function M.send(id, tbl, token)
-if not has_json() then error("JSON not available") end
-tbl._auth = token
-rednet.send(id, textutils.serializeJSON(tbl), M.PROTO)
+-- send() / broadcast() hängen _auth automatisch an, wenn token übergeben wird.
+function protocol.send(to_id, tbl, token)
+  if type(tbl) ~= "table" then error("send expects table") end
+  local msg = tbl
+  msg._auth = token
+  rednet.send(to_id, msg)
 end
 
-
-function M.broadcast(tbl, token)
-if not has_json() then error("JSON not available") end
-tbl._auth = token
-rednet.broadcast(textutils.serializeJSON(tbl), M.PROTO)
+function protocol.broadcast(tbl, token)
+  if type(tbl) ~= "table" then error("broadcast expects table") end
+  local msg = tbl
+  msg._auth = token
+  rednet.broadcast(msg)
 end
 
-
-function M.recv(timeout)
-local id, msg, proto = rednet.receive(M.PROTO, timeout)
-if not id then return nil end
-local ok, data = pcall(textutils.unserializeJSON, msg)
-if not ok then return nil end
-return id, data, proto
+-- recv(timeout): holt exakt 1 Nachricht (table) mit optionalem Timeout (Sekunden)
+function protocol.recv(timeout)
+  local id, msg = rednet.receive(nil, timeout)
+  if id and type(msg) == "table" then
+    return id, msg
+  end
+  return nil, nil
 end
 
-
-return M
+return protocol
