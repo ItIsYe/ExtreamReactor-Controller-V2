@@ -1,4 +1,5 @@
--- ===== Master Controller (Monitor + Touch-Steuerung) =====
+-- ===== Master Controller (Monitor + Touch + DUAL-FORM) =====
+-- Suchpfad für Shared-Module
 package.path = package.path .. ";/xreactor/?.lua;/xreactor/shared/?.lua;/xreactor/?/init.lua"
 
 local GUI = require("gui")
@@ -25,9 +26,9 @@ CFG.soc_target        = CFG.soc_target        or 0.5
 CFG.rpm_target        = CFG.rpm_target        or 1800
 CFG.ramp_floor_offset = CFG.ramp_floor_offset or 1
 CFG.monitor_name      = CFG.monitor_name      or nil   -- z.B. "monitor_0"
-CFG.text_scale        = CFG.text_scale        or 0.5
+CFG.text_scale        = CFG.text_scale        or 0.5   -- 0.5..5
 
--- Modem (wireless) öffnen
+-- Modem öffnen
 if rednet.isOpen() then rednet.close() end
 rednet.open(CFG.modem_side)
 
@@ -69,20 +70,44 @@ end
 
 attach_monitor()
 
--- bei An-/Abstecken neu erkennen
+-- Peripheral watcher (Monitor hotplug)
 local function peripheral_watcher()
   while true do
-    local e, side = os.pullEvent()
-    if e == "peripheral" or e == "peripheral_detach" then
+    local e = { os.pullEvent() }
+    if e[1] == "peripheral" or e[1] == "peripheral_detach" then
       attach_monitor()
     end
   end
 end
 
--- Helper-Terminal-Wrapper
+-- ---------- Terminal helpers ----------
 local function with_term(t, fn)
   local old = term.redirect(t); local ok, err = pcall(fn); term.redirect(old)
   if not ok then error(err) end
+end
+
+-- Terminal-Proxy: spiegelt Ausgaben an ZWEI Terminals (z.B. Monitor + PC)
+local function make_dual_term(t1, t2)
+  local cx, cy = 1, 1
+  local function both(method, ...)
+    if t1 and t1[method] then pcall(t1[method], ...) end
+    if t2 and t2[method] then pcall(t2[method], ...) end
+  end
+  local proxy = {}
+  function proxy.write(s) s=tostring(s); both("write", s); cx=cx+#s end
+  function proxy.clear() both("clear") end
+  function proxy.clearLine() both("clearLine") end
+  function proxy.setCursorPos(x,y) cx,cy=x,y; both("setCursorPos", x,y) end
+  function proxy.getCursorPos() return cx,cy end
+  function proxy.setTextColor(c) both("setTextColor", c) end
+  function proxy.setBackgroundColor(c) both("setBackgroundColor", c) end
+  function proxy.scroll(n) both("scroll", n) end
+  function proxy.getSize()
+    local w1,h1 = (t1 and t1.getSize) and t1.getSize() or term.getSize()
+    local w2,h2 = (t2 and t2.getSize) and t2.getSize() or term.getSize()
+    return math.min(w1,w2), math.min(h1,h2)
+  end
+  return proxy
 end
 
 -- ---------- Daten ----------
@@ -98,8 +123,7 @@ local function push_setpoints() end
 
 local function node_count() local c=0; for _ in pairs(nodes) do c=c+1 end; return c end
 
--- ---------- UI / Zeichnen ----------
--- Soft-Buttons (Koordinaten werden dynamisch berechnet)
+-- ---------- UI ----------
 local buttons = {
   {id="cfg",  label="[ Config ]"},
   {id="pgup", label="[ PgUp ]"},
@@ -117,7 +141,6 @@ local function draw_body()
   print(("Master @ %s | Modem: %s"):format(tostring(MON_NAME or "screen"), tostring(CFG.modem_side)))
   print("Nodes: "..tostring(node_count()))
 
-  -- Liste
   local y = 4
   for id,n in pairs(nodes) do
     local status = n.offline and "OFFLINE" or "ONLINE"
@@ -131,22 +154,20 @@ local function draw_body()
 
   -- Soft-Buttons unten mittig
   local labels = {}
-  for i,b in ipairs(buttons) do table.insert(labels, b.label) end
+  for _,b in ipairs(buttons) do table.insert(labels, b.label) end
   local line = table.concat(labels, "  ")
   local startx = math.max(1, math.floor((w - #line)/2) + 1)
   local cx = startx
   local by = h
   term.setCursorPos(1, by); term.clearLine()
-  term.setCursorPos(startx, by)
-  term.write(line)
+  term.setCursorPos(startx, by); term.write(line)
 
-  -- Klickflächen merken
   cx = startx
   for _,b in ipairs(buttons) do
     b.x1 = cx
     b.x2 = cx + #b.label - 1
     b.y  = by
-    cx = b.x2 + 3  -- 2 Spaces + 1 Startpunkt
+    cx = b.x2 + 3
   end
 end
 
@@ -154,8 +175,9 @@ local function draw()
   if MON then with_term(MON, draw_body) else with_term(scr, draw_body) end
 end
 
--- ---------- Config-Dialog (auf dem Monitor gerendert, Tastatur-Eingabe) ----------
+-- ---------- Config-Dialog (DUAL: Monitor + PC gleichzeitig) ----------
 local function do_config()
+  -- Formularspezifikation
   local spec = {
     {key="distribute",          label="Verteilung",              type="text"},
     {key="page_interval",       label="Page Intervall (s)",      type="number"},
@@ -174,7 +196,9 @@ local function do_config()
     {key="text_scale",          label="Textscale (0.5..5)",      type="number"},
     {key="auth_token",          label="Auth-Token",              type="text"},
   }
+
   local work = {}; for k,v in pairs(CFG) do work[k]=v end
+
   local function run_form()
     local res, data = GUI.form("Master Konfiguration", spec, work)
     if res == "save" and type(data)=="table" then
@@ -183,12 +207,20 @@ local function do_config()
       -- Modem neu
       if rednet.isOpen() then rednet.close() end
       if CFG.modem_side then rednet.open(CFG.modem_side) end
-      -- Monitor neu anhängen
+      -- Monitor neu (Skalierung übernehmen)
       attach_monitor()
     end
   end
-  -- Formular auf dem Monitor darstellen (Tastatur bleibt am PC)
-  if MON then with_term(MON, run_form) else with_term(scr, run_form) end
+
+  if MON then
+    -- DUAL-Terminal: spiegle Ausgabe auf Monitor UND PC
+    local dual = make_dual_term(MON, scr)
+    with_term(dual, run_form)
+  else
+    -- Kein Monitor: nur PC
+    with_term(scr, run_form)
+  end
+
   draw()
 end
 
@@ -219,7 +251,7 @@ local function rx_loop()
     end
 
     -- Timeouts
-    for nid,n in pairs(nodes) do
+    for _,n in pairs(nodes) do
       if (os.epoch("utc")-(n.last or 0))/1000 > CFG.telem_timeout then
         n.offline = true
       end
