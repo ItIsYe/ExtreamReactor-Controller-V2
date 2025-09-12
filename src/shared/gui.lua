@@ -1,88 +1,95 @@
-local G = {}
-local U = require("util")
+-- gui.lua – sehr einfache Formular-UI für Computer/Monitore
+-- Nutzt IMMER das aktuell gesetzte Terminal (term.redirect entscheidet der Aufrufer)
 
+local gui = {}
 
-local function bestMonitor()
-local mons = U.findMonitors()
-return mons[1]
+local function centerText(y, text)
+  local w, _ = term.getSize()
+  local x = math.floor((w - #text) / 2) + 1
+  term.setCursorPos(math.max(1,x), y)
+  term.write(text)
 end
 
-
-function G.attach()
-local mon = bestMonitor()
-local scr = term.current()
-if mon then mon.setTextScale(0.5); mon.clear(); term.redirect(mon) end
-term.setCursorBlink(false)
-term.setBackgroundColor(colors.black)
-term.setTextColor(colors.white)
-term.clear()
-return scr, mon
+-- Einfache Eingabezeile mit Default (Leer = behalte)
+local function prompt(y, label, current)
+  term.setCursorPos(1, y); term.clearLine()
+  term.write(label .. " [" .. (current == nil and "" or tostring(current)) .. "]: ")
+  return read()
 end
 
+-- Spezifikation:
+-- spec = { {key="name", label="Name", type="text|number|toggle|list"}, ... }
+-- values = Tabelle mit initialen Werten
+function gui.form(title, spec, values)
+  values = values or {}
+  term.setBackgroundColor(colors.black)
+  term.setTextColor(colors.white)
+  term.clear()
 
-local function readLine(x,y,init)
-term.setCursorPos(x,y); term.setCursorBlink(true)
-local s = init or ""
-write(s)
-while true do
-local e,p = os.pullEvent()
-if e=="char" then s=s..p; write(p)
-elseif e=="key" then
-if p==keys.enter then term.setCursorBlink(false); return s
-elseif p==keys.backspace and #s>0 then
-local cx = ({term.getCursorPos()})[1]; term.setCursorPos(cx-1,y); write(" "); term.setCursorPos(cx-1,y); s=s:sub(1,-2)
-end
-end
-end
-end
+  centerText(1, tostring(title))
+  term.setCursorPos(1,3)
+  print("(Eingabe + Enter. Leer = Wert behalten. Toggle: y/n, true/false)")
 
+  local y = 5
+  local out = {}
+  for i,field in ipairs(spec or {}) do
+    local cur = values[field.key]
+    local inp = prompt(y, field.label, cur); y = y + 1
 
-function G.form(title, spec, data)
-term.clear()
-local w,h = term.getSize()
-term.setCursorPos(1,1); write(title)
-local y=3
-for i,f in ipairs(spec) do
-term.setCursorPos(2,y); write(f.label..": ")
-local val = data[f.key]
-if f.type=="toggle" then write((val and "ON" or "OFF").." [SPACE]")
-else write(tostring(val or "")) end
-y=y+1
-end
-term.setCursorPos(1,h-1); write("[ENTER]=Bearbeiten [TAB]=Weiter [S]=Speichern [Q]=Zurück")
+    if inp == nil then inp = "" end
+    if inp == "" then
+      out[field.key] = cur
+    else
+      local t = field.type or "text"
+      if t == "number" then
+        local n = tonumber(inp)
+        if n == nil then
+          print("  -> Ungueltige Zahl, behalte alten Wert"); out[field.key] = cur
+        else
+          out[field.key] = n
+        end
+      elseif t == "toggle" then
+        local s = tostring(inp):lower()
+        out[field.key] = (s=="y" or s=="yes" or s=="true" or s=="1")
+      elseif t == "list" then
+        -- Kommagetrennt in Tabelle
+        local list = {}
+        for part in inp:gmatch("[^,]+") do
+          local v = part:gsub("^%s+",""):gsub("%s+$","")
+          if v ~= "" then table.insert(list, v) end
+        end
+        out[field.key] = list
+      else
+        out[field.key] = inp
+      end
+    end
+  end
 
-
-local idx=1
-local function redraw(i)
-local yy = 2+i
-term.setCursorPos(2,yy); term.clearLine();
-local f = spec[i]
-write(f.label..": ")
-if f.type=="toggle" then write((data[f.key] and "ON" or "OFF").." [SPACE]") else write(tostring(data[f.key] or "")) end
-end
-
-
-while true do
-local e,k = os.pullEvent("key")
-if k==keys.tab then idx=(idx % #spec)+1
-elseif k==keys.enter then
-local f=spec[idx]; local yy=2+idx
-if f.type=="toggle" then data[f.key]=not data[f.key]
-elseif f.type=="number" or f.type=="text" then
-term.setCursorPos(2,yy); term.clearLine(); write(f.label..": ")
-local s = readLine(2+#f.label+2, yy, tostring(data[f.key] or ""))
-if f.type=="number" then data[f.key]=tonumber(s) or data[f.key] else data[f.key]=s end
-elseif f.type=="list" then
-term.setCursorPos(2,yy); term.clearLine(); write(f.label..": (Komma)")
-local s = readLine(2+#f.label+10, yy, table.concat(data[f.key] or {}, ","))
-local arr={}; for part in string.gmatch(s,"[^,]+") do local t=part:gsub("^%s+",""):gsub("%s+$",""); if #t>0 then table.insert(arr,t) end end
-data[f.key]=arr
-end
-redraw(idx)
-elseif k==keys.s then return "save", data
-elseif k==keys.q or k==keys.escape then return "quit" end
-end
+  term.setCursorPos(1, y+1)
+  print("[Enter] Speichern, [Esc] Abbrechen …")
+  while true do
+    local e, key = os.pullEvent("key")
+    if key == keys.enter then
+      return "save", out
+    elseif key == keys.escape then
+      return "cancel", values
+    end
+  end
 end
 
+-- ein paar kleine Helfer für Überschriften/Labels (optional)
+function gui.header(text)
+  term.setBackgroundColor(colors.black)
+  term.setTextColor(colors.white)
+  term.clear()
+  centerText(1, text)
+end
 
-return G
+function gui.label(x, y, text, color)
+  term.setCursorPos(x, y)
+  if color then term.setTextColor(color) end
+  term.write(text)
+  if color then term.setTextColor(colors.white) end
+end
+
+return gui
