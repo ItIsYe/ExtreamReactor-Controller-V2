@@ -15,6 +15,37 @@ local nodes = {}
 local page_idx = 1
 local scr = term.current()
 
+-- === Dummy-Funktionen (Platzhalter, später implementieren) ===
+local function read_main_soc()
+  -- TODO: hier später den tatsächlichen Speicherstand auslesen
+  return 0.5  -- 50% als Standardwert
+end
+
+local function soc_to_steam_target(soc)
+  -- TODO: hier später aus SoC den Steam-Bedarf berechnen
+  return 0
+end
+
+local function distribute(total)
+  -- TODO: Verteilung auf die Nodes implementieren
+end
+
+local function apply_ramp()
+  -- TODO: Rampensteuerung implementieren
+end
+
+local function push_setpoints()
+  -- TODO: Sollwerte an Nodes senden
+end
+
+local function draw()
+  -- TODO: Ausgabe auf Monitor/Terminal
+  term.setCursorPos(1,1)
+  term.clear()
+  print("Master online – Monitoring aktiv")
+  print("Nodes verbunden: "..tostring(#nodes))
+end
+
 -- === Konfigurations-Dialog ===
 local function do_config()
   local CFG_DEF = require("config_master")
