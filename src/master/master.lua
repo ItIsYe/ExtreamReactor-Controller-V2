@@ -15,36 +15,25 @@ local nodes = {}
 local page_idx = 1
 local scr = term.current()
 
--- === Dummy-Funktionen (Platzhalter, später implementieren) ===
-local function read_main_soc()
-  -- TODO: hier später den tatsächlichen Speicherstand auslesen
-  return 0.5  -- 50% als Standardwert
+-- === STUBS: später durch echte Logik ersetzen ===
+function read_main_soc()
+  return (CFG and CFG.soc_target) or 0.5
 end
 
-local function soc_to_steam_target(soc)
-  -- TODO: hier später aus SoC den Steam-Bedarf berechnen
+function soc_to_steam_target(soc)
   return 0
 end
 
-local function distribute(total)
-  -- TODO: Verteilung auf die Nodes implementieren
-end
+function distribute(total) end
+function apply_ramp() end
+function push_setpoints() end
 
-local function apply_ramp()
-  -- TODO: Rampensteuerung implementieren
-end
-
-local function push_setpoints()
-  -- TODO: Sollwerte an Nodes senden
-end
-
-local function draw()
-  -- TODO: Ausgabe auf Monitor/Terminal
-  term.setCursorPos(1,1)
-  term.clear()
-  print("Master online – Monitoring aktiv")
+function draw()
+  term.setCursorPos(1,1); term.clear()
+  print("Master online (Stub)")
   print("Nodes verbunden: "..tostring(#nodes))
 end
+-- === /STUBS ===
 
 -- === Konfigurations-Dialog ===
 local function do_config()
