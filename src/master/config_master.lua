@@ -3,9 +3,9 @@ return {
   modem_side = "left",
 
   -- UI
-  monitor_name = nil,
-  text_scale   = 0.5,
-  rows_per_page = nil,
+  monitor_name   = nil,
+  text_scale     = 0.5,
+  rows_per_page  = nil,
 
   -- timings
   telem_timeout     = 10,
@@ -13,7 +13,7 @@ return {
   beacon_interval   = 5,
   setpoint_interval = 5,
 
-  -- policy defaults
+  -- policy defaults (Phase A/B baseline)
   soc_low=0.30, soc_high=0.85, hysteresis=0.03,
   rpm_target=1800, steam_max=2000,
 
@@ -22,7 +22,7 @@ return {
   fuel_target_threshold  = 0.95,
   refuel_cooldown        = 60,
   fuel_auto_refill       = true,
-  fuel_request_type      = "rednet", -- "rednet" | "ccbridge" (Supply-PC empfohlen)
+  fuel_request_type      = "rednet", -- "rednet" | "ccbridge"
   fuel_source_id         = "ME",
   min_refuel_batch       = 1,
   max_refuel_batch       = 64,
@@ -36,10 +36,26 @@ return {
   waste_auto_drain       = true,
   waste_strategy         = "online", -- "online" | "pause"
   waste_item_id          = "biggerreactors:cyanite_ingot",
-
-  -- Reprocessing
   reproc_enabled         = true,
   reproc_water_guard     = true,
   reproc_queue_max       = 8,
   reproc_out_item_id     = "biggerreactors:blutonium_ingot",
+
+  -- ===== Phase C: Adaptive Ramp =====
+  adapt_enabled     = true,   -- aktiviere adaptive Stellgröße
+  adapt_k           = 0.60,   -- Verstärkung (0..1)
+  adapt_min_factor  = 0.25,   -- untere Klemme relativer Steam-Anteil
+  adapt_max_factor  = 1.00,   -- obere Klemme
+  adapt_smooth      = 0.60,   -- EMA Glättung (0..1)
+  adapt_dt          = 5,      -- Sekundenfenster für Trend (≈ setpoint_interval)
+
+  -- ===== Phase C: Thermisches Band =====
+  therm_enabled     = true,
+  therm_target      = 860,    -- °C Ziel
+  therm_band        = 40,     -- ±Bandbreite
+  therm_gain        = 0.15,   -- Korrekturfaktor (0..1) auf steam_target
+
+  -- ===== Phase C: Logging & Graphs =====
+  log_capacity      = 180,    -- ~15 min bei 5s interval
+  log_path          = "/xreactor/logs/master_timeseries.json",
 }
