@@ -1,289 +1,217 @@
--- master.lua — Phase D: HA + Roles + Backups + Webhooks (on top of Phase C)
-package.path = package.path .. ";/xreactor/?.lua;/xreactor/shared/?.lua;/xreactor/?/init.lua"
+--==========================================================
+-- XReactor ◈ MASTER (Leader/Display)
+-- - empfängt HELLO/TELEM von Nodes (auth-basiert)
+-- - sendet HELLO_ACK
+-- - zeigt Aggregat + Node-Liste (live)
+-- - optional Ausgabe auf Monitor (auto TextScale)
+--==========================================================
 
-local STO = require("storage")
-local POL = require("policy")
-local PRO = require("protocol")
-local FUEL= require("fuel_core")
-local WST = require("waste_core")
-local SEQ = require("sequencer")
-local PLB = require("playbooks")
-local MX  = require("matrix_core")
-local LOG = require("logger")
-local AUTH= require("auth")
-local BK  = require("backup")
-local HA  = require("ha")
-local WH  = require("webhooks")
-
-local CFG_PATH = "/xreactor/config_master.lua"
-local CFG={}
-do
-  local ok, def=pcall(require,"config_master"); if ok and type(def)=="table" then for k,v in pairs(def) do CFG[k]=v end end
-  local j = STO.load_json(CFG_PATH, nil); if type(j)=="table" then for k,v in pairs(j) do CFG[k]=v end end
+-- ---- sichere require + Config ---------------------------------------------
+local function try_require(name)
+  local ok, mod = pcall(require, name)
+  if ok then return mod end
 end
 
-assert(peripheral.getType(CFG.modem_side)=="modem", "No modem on "..tostring(CFG.modem_side))
-PRO.open(CFG.modem_side)
-local MASTER_ID = os.getComputerID()
-local MASTER_GEN = math.floor(os.epoch("utc")/1000) % 2147483647
-
--- init HA & auth
-HA.init(CFG, MASTER_ID, MASTER_GEN)
-AUTH.init({role=CFG.role, pin=CFG.pin})
-
--- monitor
-local function pick_monitor()
-  if CFG.monitor_name and peripheral.hasType(CFG.monitor_name,"monitor") then return peripheral.wrap(CFG.monitor_name) end
-  local best, bestArea
-  for _,n in ipairs(peripheral.getNames()) do
-    if peripheral.hasType(n,"monitor") then
-      local m = peripheral.wrap(n); local w,h = m.getSize(); local area = w*h
-      if not best or area > bestArea then best, bestArea = m, area end
-    end
-  end
-  return best
-end
-local MON = pick_monitor()
-if MON then pcall(function() MON.setTextScale(CFG.text_scale or 0.5); MON.setBackgroundColor(colors.black); MON.setTextColor(colors.white); MON.clear() end) end
-local function with_mon(fn) if MON then local old=term.redirect(MON); fn(); term.redirect(old) end end
-
--- state
-local nodes = {} -- [id] = { last=ms, mode, telem={...}, offline=false }
-local LAST_DECISION = {reactor_on=false,turbines_on=false}
-
--- logging buffers
-local RB = {
-  soc   = LOG.new(CFG.log_capacity or 180),
-  temp  = LOG.new(CFG.log_capacity or 180),
-  rpm   = LOG.new(CFG.log_capacity or 180),
-  steam = LOG.new(CFG.log_capacity or 180),
+local CFG = {
+  modem_side       = "right",     -- Modem zum rednet
+  monitor_side     = nil,         -- z.B. "left"|"right"|..., nil = nur PC
+  auth_token       = "xreactor",  -- muss zu Node passen
+  telem_timeout    = 15,          -- s bis Node „offline“
+  redraw_interval  = 0.3,         -- s
 }
+do
+  local ok, user = pcall(dofile, "/xreactor/config_master.lua")
+  if ok and type(user)=="table" then
+    for k,v in pairs(user) do CFG[k]=v end
+  end
+end
+
+-- ---- I/O Targets (PC / Monitor) -------------------------------------------
+local mon = nil
+local function bind_monitor()
+  if CFG.monitor_side and peripheral.isPresent(CFG.monitor_side)
+    and peripheral.getType(CFG.monitor_side)=="monitor" then
+    mon = peripheral.wrap(CFG.monitor_side)
+    -- Auto-Scale: versuche viel Inhalt lesbar zu halten
+    local w,h = mon.getSize()
+    if w >= 120 then mon.setTextScale(0.5)
+    elseif w >= 60 then mon.setTextScale(0.75)
+    else mon.setTextScale(1) end
+  else
+    mon = nil
+  end
+end
+bind_monitor()
+
+local function T() return mon or term end
+local function cls()
+  local t=T()
+  t.setBackgroundColor(colors.black)
+  t.setTextColor(colors.white)
+  t.clear(); t.setCursorPos(1,1)
+end
+local function wprint(s)
+  local t=T()
+  local x,y=t.getCursorPos()
+  local W=t.getSize()
+  if #s>W then s=s:sub(1,W) end
+  t.write(s); t.setCursorPos(1,y+1)
+end
+
+-- ---- Modem/Rednet ---------------------------------------------------------
+assert(peripheral.getType(CFG.modem_side)=="modem", "No modem on "..tostring(CFG.modem_side))
+rednet.open(CFG.modem_side)
+local MASTER_ID = os.getComputerID()
+
+-- ---- Node-Registry ---------------------------------------------------------
+local nodes = {}  -- [id] = { last_ms=..., caps={reactors=..,turbines=..}, telem={reactors={},turbines={},agg={...}} }
+
 local function now_ms() return os.epoch("utc") end
-local function now_s() return math.floor(now_ms()/1000) end
+local function age_sec(ms) return math.floor((now_ms()-(ms or 0))/1000) end
 
--- tx helper
-local function broadcast_cmd(reactor_list)
-  local cmd = PRO.msg_command_setpoints(MASTER_GEN, CFG.auth_token, reactor_list, nil)
-  for nid,_ in pairs(nodes) do PRO.send(nid, cmd) end
-end
-
--- rx
-local function rx_loop()
-  while true do
-    local id, msg = rednet.receive(nil, 1.0)
-    if id and type(msg)=="table" and msg._auth == CFG.auth_token then
-      if msg.type=="HELLO" then
-        nodes[id]=nodes[id] or {}
-        nodes[id].last = now_ms()
-        nodes[id].mode = nodes[id].mode or "REMOTE_CONTROL"
-        PRO.send(id, PRO.msg_hello_ack(MASTER_ID, MASTER_GEN, CFG, CFG.auth_token))
-        WH.send(CFG, "node", "HELLO", {node=id})
-      elseif msg.type=="TELEM" then
-        nodes[id]=nodes[id] or {}
-        nodes[id].last = now_ms()
-        nodes[id].mode = msg.mode
-        nodes[id].telem = msg
-      elseif msg.type=="FUEL_CONFIRM" or msg.type=="FUEL_DENY" or msg.type=="FUEL_DONE" or
-             msg.type=="WASTE_CONFIRM" or msg.type=="WASTE_DENY" or msg.type=="WASTE_DONE" or
-             msg.type=="REPROC_CONFIRM" or msg.type=="REPROC_DENY" or msg.type=="REPROC_DONE" then
-        FUEL.on_supply_msg(CFG, msg); WST.on_supply_msg(CFG, msg)
-        WH.send(CFG, "supply", msg.type, msg)
-      elseif msg.type=="BEACON" and msg.master_id and msg.master_id ~= MASTER_ID then
-        -- foreign master beacon → hand over to HA
-        HA.on_beacon(MASTER_ID, MASTER_GEN, msg.master_id, msg.master_generation)
-      end
-    end
-    -- timeouts
-    for nid,n in pairs(nodes) do
-      local age = (now_ms() - (n.last or 0))/1000
-      local was = n.offline
-      n.offline = age > (CFG.offline_threshold or 30)
-      if was ~= n.offline then
-        WH.send(CFG, "node", n.offline and "NODE_OFFLINE" or "NODE_ONLINE", {node=nid})
-      end
-    end
+local function mark_timeouts()
+  for id,n in pairs(nodes) do
+    local offline = age_sec(n.last_ms or 0) > (CFG.telem_timeout or 15)
+    n.offline = offline
   end
 end
 
--- collect snapshot for logging/thermal
-local function collect_snapshot()
-  local reactors_any, temp, rpm, steam = nil, nil, nil, nil
+-- ---- Aggregation über alle Nodes ------------------------------------------
+local function total_agg()
+  local A = {
+    node_cnt=0, node_on=0,
+    reactors={count=0,active=0,hot=0,energy=0,fuel=0,fuel_max=0},
+    turbines={count=0,active=0,rpm=0,flow=0,flow_max=0,prod=0},
+  }
   for _,n in pairs(nodes) do
-    if n.telem and n.telem.reactors and #n.telem.reactors>0 then
-      reactors_any = reactors_any or n.telem.reactors
-      local R = n.telem.reactors[1]
-      temp  = temp  or R.temp
-      rpm   = rpm   or R.rpm_avg
-      steam = steam or R.steam_sum
+    A.node_cnt = A.node_cnt + 1
+    if not n.offline then A.node_on = A.node_on + 1 end
+    local ag = n.telem and n.telem.agg
+    if ag then
+      A.reactors.count   = A.reactors.count   + (ag.reactors.count or 0)
+      A.reactors.active  = A.reactors.active  + (ag.reactors.active or 0)
+      A.reactors.hot     = A.reactors.hot     + (ag.reactors.hot or 0)
+      A.reactors.energy  = A.reactors.energy  + (ag.reactors.energy or 0)
+      A.reactors.fuel    = A.reactors.fuel    + (ag.reactors.fuel or 0)
+      A.reactors.fuel_max= A.reactors.fuel_max+ (ag.reactors.fuel_max or 0)
+
+      A.turbines.count   = A.turbines.count   + (ag.turbines.count or 0)
+      A.turbines.active  = A.turbines.active  + (ag.turbines.active or 0)
+      A.turbines.rpm     = A.turbines.rpm     + (ag.turbines.rpm or 0)
+      A.turbines.flow    = A.turbines.flow    + (ag.turbines.flow or 0)
+      A.turbines.flow_max= A.turbines.flow_max+ (ag.turbines.flow_max or 0)
+      A.turbines.prod    = A.turbines.prod    + (ag.turbines.prod or 0)
     end
   end
-  return reactors_any, temp, rpm, steam
+  return A
 end
 
--- policy + adaptive + thermal (from Phase C)
-local function compute_reactors_setpoints()
-  local soc = MX.read_soc_from_nodes(nodes) or 0.5
-  MX.update_trend(CFG, soc)
-  local adaptF = MX.adapt_factor(CFG)
-
-  local d = POL.decide(soc, LAST_DECISION, CFG)
-  LAST_DECISION = {reactor_on=d.reactor_on, turbines_on=d.turbines_on}
-
-  local reactors_any, temp = collect_snapshot()
-  local thermF = 1.0
-  if reactors_any and reactors_any[1] and reactors_any[1].temp then
-    thermF = MX.thermal_correction(CFG, reactors_any[1].temp)
-  end
-
-  local base = d.steam_target or (CFG.steam_max or 2000)
-  local target = math.floor(base * adaptF * thermF + 0.5)
-  if target < math.floor((CFG.steam_max or 2000) * (CFG.adapt_min_factor or 0.25)) then
-    target = math.floor((CFG.steam_max or 2000) * (CFG.adapt_min_factor or 0.25))
-  end
-  if target > (CFG.steam_max or 2000) then target = CFG.steam_max or 2000 end
-
-  LOG.push(RB.soc,   {t=now_s(), v=soc})
-  LOG.push(RB.temp,  {t=now_s(), v=temp})
-  LOG.push(RB.steam, {t=now_s(), v=target})
-
-  return { {reactor_id="GLOBAL", reactor_on=d.reactor_on, steam_target=target, rpm_target=d.target_rpm} }
-end
-
--- setpoints with HA gating
-local function setpoints_driver()
-  local status, newgen = HA.tick(MASTER_ID, MASTER_GEN)
-  if status=="PROMOTED" then
-    MASTER_GEN = newgen
-    WH.send(CFG, "ha", "PROMOTED", {master=MASTER_ID, generation=MASTER_GEN})
-  end
-
-  if not HA.should_act() then
-    -- standby: do not push commands or supply ops; still draw UI
-    return
-  end
-
-  SEQ.tick(CFG, function(rlist) broadcast_cmd(rlist) end)
-  local ov = PLB.evaluate(CFG, nodes)
-  if ov and #ov>0 then broadcast_cmd(ov); return end
-  local rlist = compute_reactors_setpoints()
-  broadcast_cmd(rlist)
-end
-
-local function setpoints_loop()
-  while true do
-    setpoints_driver()
-    sleep(CFG.setpoint_interval or 5)
-  end
-end
-
-local function beacon_loop()
-  while true do
-    local b = PRO.msg_beacon(MASTER_ID, MASTER_GEN, CFG.auth_token)
-    PRO.broadcast(b)
-    sleep(CFG.beacon_interval or 5)
-  end
-end
-
--- fuel+waste gated by HA; also send webhooks
-local function supply_loop()
-  while true do
-    if HA.should_act() then
-      local reactors_any = nil
-      for _,n in pairs(nodes) do
-        if n.telem and n.telem.reactors and #n.telem.reactors>0 then reactors_any = n.telem.reactors; break end
-      end
-      if reactors_any then
-        FUEL.tick(CFG, reactors_any, function(msg) PRO.broadcast(msg) end)
-        WST.tick(CFG, reactors_any, function(msg) PRO.broadcast(msg) end)
-        if CFG.reproc_enabled then WST.request_reproc(CFG, CFG.waste_drain_batch or 64, function(msg) PRO.broadcast(msg) end) end
-      end
-    end
-    sleep(3)
-  end
-end
-
--- periodic backups (optional) + log flush
-local function maintenance_loop()
-  local last_backup = 0
-  while true do
-    if (now_s() % 30) == 0 then
-      LOG.flush(CFG.log_path or "/xreactor/logs/master_timeseries.json", RB)
-    end
-    if CFG.backup_enabled then
-      local nowt = now_s()
-      if (nowt - last_backup) >= 1800 then  -- alle 30 min
-        local path = BK.snapshot("/xreactor", CFG.backup_dir or "/xreactor/backups", {"/startup"})
-        last_backup = nowt
-        WH.send(CFG, "backup", "SNAPSHOT", {path=path})
-      end
-    end
-    sleep(1)
-  end
-end
-
--- UI with HA state + role badge
-local function draw_graph(x, y, w, h, rb, vmin, vmax, label)
-  local oldbg, oldfg = term.getBackgroundColor(), term.getTextColor()
-  term.setBackgroundColor(colors.gray)
-  for yy=0,h-1 do term.setCursorPos(x, y+yy); term.write(string.rep(" ", w)) end
-  term.setBackgroundColor(oldbg)
-  local pts = {}
-  for row in LOG.iter(rb) do if row and type(row.v)=="number" then table.insert(pts, row.v) end end
-  if #pts>0 then
-    vmin = vmin or math.huge; vmax = vmax or -math.huge
-    for _,v in ipairs(pts) do if v<vmin then vmin=v end; if v>vmax then vmax=v end end
-    if vmin==vmax then vmax=vmax+1 end
-    local step = math.max(1, math.floor(#pts / w))
-    local xi, idx = 0, 1
-    while idx <= #pts and xi < w do
-      local v = pts[idx]
-      local norm = (v - vmin) / (vmax - vmin)
-      local hh = math.max(1, math.floor(norm * (h-1) + 0.5))
-      for yy=0,hh-1 do term.setCursorPos(x+xi, y + (h-1-yy)); term.setBackgroundColor(colors.green); term.write(" ") end
-      xi = xi + 1; idx = idx + step
-    end
-  end
-  term.setBackgroundColor(oldbg); term.setTextColor(colors.white)
-  term.setCursorPos(x, y-1); term.write(label or "")
-end
+-- ---- Drawing ---------------------------------------------------------------
+local function fmt(n) if n==nil then return "-" end return tostring(math.floor(n+0.5)) end
 
 local function draw()
-  with_mon(function()
-    term.setBackgroundColor(colors.black); term.setTextColor(colors.white); term.clear()
-    local ha = HA.status()
-    term.setCursorPos(1,1); term.write(("Master #%d gen %d  [%s]"):format(MASTER_ID, MASTER_GEN, ha.role))
-    term.setCursorPos(1,2); term.write(("Role: %s"):format((AUTH and AUTH.cfg and AUTH.cfg.role) or "unknown"))
-    term.setCursorPos(1,3); term.write(("Nodes: %d"):format((function() local c=0 for _ in pairs(nodes) do c=c+1 end return c end)()))
+  cls()
+  wprint(("Master #%d  |  gen %d"):format(MASTER_ID, os.day()*86400 + os.time()))
+  local ms = "Modem: "..tostring(CFG.modem_side)
+  local mon_s = "Monitor: "..(CFG.monitor_side or "-")
+  wprint(ms.."  |  "..mon_s)
+  wprint(("Auth: %s  |  Timeout: %ss"):format(CFG.auth_token, CFG.telem_timeout or 15))
+  wprint(("Nodes bekannt: %d"):format((function() local c=0 for _ in pairs(nodes) do c=c+1 end return c end)()))
+  wprint("")
 
-    local y=5
-    for nid,n in pairs(nodes) do
-      local status = n.offline and "OFFLINE" or (n.mode or "-")
-      local color = n.offline and colors.red or (n.mode=="LOCAL_CONTROL" and colors.blue or (n.mode=="MASTER_LOSS_GRACE" and colors.orange or colors.green))
-      term.setCursorPos(1,y); term.setTextColor(color); term.write(("#%d  %s"):format(nid, status)); term.setTextColor(colors.white)
-      if n.telem and n.telem.reactors and n.telem.reactors[1] then
-        local R = n.telem.reactors[1]
-        term.setCursorPos(18,y); term.write(("R:%s Fuel:%s%% Waste:%s%% Temp:%s Steam~:%s"):format(
-          tostring(R.reactor_id or "?"),
-          (R.fuel_pct and math.floor(R.fuel_pct*100+0.5) or "-"),
-          (R.waste_pct and math.floor(R.waste_pct*100+0.5) or "-"),
-          (R.temp and math.floor(R.temp+0.5) or "-"),
-          R.steam_sum or "-"
-        ))
-      end
-      y=y+1
+  local A = total_agg()
+  wprint(("Reaktoren: %d aktiv / %d gesamt | hot %s mB/t | fuel %s/%s mB | energy %s")
+    :format(A.reactors.active, A.reactors.count, fmt(A.reactors.hot), fmt(A.reactors.fuel), fmt(A.reactors.fuel_max), fmt(A.reactors.energy)))
+  wprint(("Turbinen : %d aktiv / %d gesamt | rpm %s | flow %s/%s | prod %s/t")
+    :format(A.turbines.active, A.turbines.count, fmt(A.turbines.rpm), fmt(A.turbines.flow), fmt(A.turbines.flow_max), fmt(A.turbines.prod)))
+  wprint("")
+
+  wprint("ID   | age | state    | R(act/total) | T(act/total) | prod/t | rpm | flow/Max")
+  wprint(("─"):rep(({T().getSize()})[1]))
+  -- sortierte Liste (stabile Reihenfolge)
+  local list = {}
+  for id,n in pairs(nodes) do table.insert(list, {id=id, n=n}) end
+  table.sort(list, function(a,b) return a.id<b.id end)
+
+  for _,e in ipairs(list) do
+    local id, n = e.id, e.n
+    local ag = n.telem and n.telem.agg
+    local R,Tb = {0,0},{0,0}
+    local prod,rpm,flow,flowm = 0,0,0,0
+    if ag then
+      R={ag.reactors.active or 0, ag.reactors.count or 0}
+      Tb={ag.turbines.active or 0, ag.turbines.count or 0}
+      prod=ag.turbines.prod or 0; rpm=ag.turbines.rpm or 0
+      flow=ag.turbines.flow or 0; flowm=ag.turbines.flow_max or 0
     end
+    local state = n.offline and "OFFLINE" or "online "
+    local line = string.format("#%-3d | %3ds | %-7s | %2d/%-2d      | %2d/%-2d      | %5s | %4s | %4s/%-4s",
+      id, age_sec(n.last_ms or 0), state, R[1],R[2], Tb[1],Tb[2], fmt(prod), fmt(rpm), fmt(flow), fmt(flowm))
+    wprint(line)
+  end
 
-    local W,H = term.getSize()
-    local gw, gh = math.floor(W*0.48), math.floor(H*0.28)
-    local gx = W - gw + 1
-    draw_graph(gx, 4, gw, gh, RB.soc, 0, 1, "SoC")
-    draw_graph(gx, 6+gh, gw, gh, RB.temp, nil, nil, "Temp")
-    draw_graph(gx, 8+gh*2, gw, gh, RB.steam, nil, nil, "Steam tgt")
-  end)
+  wprint("")
+  wprint("[F5] Neuscan Nodes (leere löschen)   [Q] Beenden")
 end
 
-local function draw_loop() while true do draw(); sleep(1) end end
+-- ---- Networking ------------------------------------------------------------
+local function send_ack(id)
+  rednet.send(id, {type="HELLO_ACK", _auth=CFG.auth_token, master_id=MASTER_ID})
+end
 
-print("Master Phase D starting…")
-SEQ.reset()
-parallel.waitForAny(rx_loop, beacon_loop, setpoints_loop, supply_loop, maintenance_loop, draw_loop)
+local function rx_loop()
+  while true do
+    local id, msg = rednet.receive(1)
+    if id and type(msg)=="table" and msg._auth==CFG.auth_token then
+      if msg.type=="HELLO" then
+        -- Node registrieren / Caps merken
+        nodes[id] = nodes[id] or {}
+        nodes[id].caps = msg.caps or nodes[id].caps or {}
+        nodes[id].last_ms = now_ms()
+        nodes[id].offline = false
+        send_ack(id)
+      elseif msg.type=="TELEM" then
+        nodes[id] = nodes[id] or {}
+        nodes[id].caps  = msg.caps or nodes[id].caps or {}
+        nodes[id].telem = msg.telem or nodes[id].telem
+        nodes[id].last_ms = now_ms()
+        nodes[id].offline = false
+      end
+    end
+  end
+end
+
+-- ---- UI/Housekeeping -------------------------------------------------------
+local function house_loop()
+  local last = 0
+  while true do
+    if os.clock() - last >= (CFG.redraw_interval or 0.3) then
+      mark_timeouts()
+      draw()
+      last = os.clock()
+    end
+    os.sleep(0.05)
+  end
+end
+
+local function keys_loop()
+  while true do
+    local e, k = os.pullEvent("key")
+    if k==keys.f5 then
+      -- „Neuscan“ = veraltete/nie gehörte löschen (optional)
+      local keep = {}
+      for id,n in pairs(nodes) do
+        if n.last_ms and age_sec(n.last_ms)<600 then keep[id]=n end
+      end
+      nodes = keep
+      draw()
+    elseif k==keys.q or k==keys.escape then
+      cls(); term.setCursorPos(1,1); print("Master beendet."); return
+    end
+  end
+end
+
+-- ---- Startbanner & run -----------------------------------------------------
+cls()
+wprint(("Master startet...  Modem: %s  |  Monitor: %s"):format(CFG.modem_side, CFG.monitor_side or "-"))
+parallel.waitForAny(rx_loop, house_loop, keys_loop)
