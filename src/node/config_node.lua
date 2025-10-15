@@ -1,22 +1,22 @@
 return {
-modem_side = "right",
-auth_token = "changeme", -- Master & Nodes müssen identisch sein
-node_id = nil,
-floor = 1,
-rpm_target_default = 1800,
-flow_step = 50,
-flow_min = 0,
-flow_max = 25000,
-rod_step = 1,
-rod_min = 0,
-rod_max = 100,
-reactor = nil,
-turbines = {},
-floor_storages = {},
+  node_title   = "Node@"..os.getComputerID(),
+  auth_token   = "changeme",
 
+  -- Peripherie
+  modem_comm   = "right",   -- wireless → Master
+  wired_side   = "top",     -- wired → reactors/turbines/matrix
+  monitor_side = "bottom",  -- local monitor
 
--- Alarme lokal
-alarm_rpm_low = 1600,
-alarm_rpm_high = 1950,
-alarm_enable_sound = false,
+  -- Betrieb
+  update        = 2,     -- telem interval (s)
+  grace_duration= 90,    -- hold last setpoints after master loss
+
+  -- Safety (light, Phase A)
+  max_temp      = 900,   -- °C (reactor casing)
+  max_rpm       = 2300,  -- turbine rotor
+  min_soc_shutdown = nil,
+
+  -- Mapping reaktorzentriert (optional jetzt, später UI-Editor)
+  reactors    = {},        -- e.g. {"R-A","R-B"} (IDs frei wählbar)
+  assignments = {},        -- turbine_name -> reactor_id
 }
