@@ -8,7 +8,7 @@ local LOCAL_MAN_PATH = BASE.."/.installed_manifest.lua"
 
 -- >>> URL zu DEINEM Manifest im Repo (raw):
 local REMOTE_MAN_URL =
-  "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/manifest.lua"
+  "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
 
 -- ------------- helpers -------------
 local function ensure_dir(path)
