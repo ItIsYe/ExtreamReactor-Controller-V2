@@ -1,34 +1,19 @@
 return {
-modem_side = "right",
-auth_token = "changeme", -- Master & Nodes müssen identisch sein
-rpm_target = 1800,
-steam_total_min = 0,
-steam_total_max = 250000,
-setpoint_interval = 5,
-telem_timeout = 10,
-main_storages = { },
-soc_target = 0.70,
-kP = 180000,
-kI = 20000,
-distribute = "by_turbines", -- even | by_turbines | by_soc
+  auth_token = "changeme",
+  modem_side = "left",
 
+  -- UI
+  monitor_name = nil, -- auto-pick the largest monitor if nil
+  text_scale   = 0.5,
+  rows_per_page = nil,
 
--- Multi‑Monitor / Paging
-page_interval = 5, -- Sekunden bis nächste Seite
-rows_per_page = 10,
+  -- timings
+  telem_timeout     = 10,
+  offline_threshold = 30,
+  beacon_interval   = 5,
+  setpoint_interval = 5,
 
-
--- Gestaffeltes Hochfahren
-ramp_enabled = true,
-ramp_step = 5000, -- mB/t pro Schritt & Node
-ramp_interval = 3, -- Sekunden zwischen Schritten
-ramp_floor_offset = 2,-- Sekunden Etagen‑Versatz (floor * offset)
-
-
--- Alarm-Konfiguration (Master-Sicht)
-alarm_sound = true,
-alarm_rpm_low = 1600,
-alarm_rpm_high = 1950,
-alarm_floor_soc_low = 0.10,
-alarm_node_offline_s = 15,
+  -- policy defaults
+  soc_low=0.30, soc_high=0.85, hysteresis=0.03,
+  rpm_target=1800, steam_max=2000,
 }
