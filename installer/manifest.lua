@@ -1,117 +1,78 @@
-return {
-  version = "2025-10-15-PhaseE-02",
+-- =========================================================
+-- XReactor Manifest
+--   Installations-Manifest für alle Rollen:
+--   MASTER | NODE | DEBUG
+-- =========================================================
 
-  startup = {
-    master = "/xreactor/master",
-    node   = "/xreactor/node",
-    supply = "/xreactor/supply",
+return {
+
+  -- =========================================================
+  -- MASTER (zentraler Bildschirm)
+  -- =========================================================
+  ["/xreactor/master"] = {
+    ver   = "2025-10-15-03",
+    roles = {"master"},
+    url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/master.lua",
+    desc  = "Zentrale Steuerung & Anzeige aller Reaktor-Nodes"
   },
 
-  files = {
-    -- shared
-    ["/xreactor/shared/storage.lua"] = {
-      ver   = "2025-10-15-01", roles = {"all"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/storage.lua"
-    },
-    ["/xreactor/shared/protocol.lua"] = {
-      ver   = "2025-10-15-02", roles = {"all"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/protocol.lua"
-    },
-    ["/xreactor/shared/policy.lua"] = {
-      ver   = "2025-10-15-01", roles = {"all"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/policy.lua"
-    },
-    ["/xreactor/shared/devices.lua"] = {
-      ver   = "2025-10-15-02", roles = {"all"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/devices.lua"
-    },
-    ["/xreactor/shared/logger.lua"] = {
-      ver   = "2025-10-15-01", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/logger.lua"
-    },
-    ["/xreactor/shared/auth.lua"] = {
-      ver   = "2025-10-15-01", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/auth.lua"
-    },
-    ["/xreactor/shared/backup.lua"] = {
-      ver   = "2025-10-15-01", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/backup.lua"
-    },
-    ["/xreactor/shared/webhooks.lua"] = {
-      ver   = "2025-10-15-01", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/webhooks.lua"
-    },
-    ["/xreactor/shared/ha.lua"] = {
-      ver   = "2025-10-15-01", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/ha.lua"
-    },
+  ["/xreactor/config_master.lua"] = {
+    ver   = "2025-10-15-01",
+    roles = {"master"},
+    url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/config_master.lua",
+    desc  = "Master-Konfigurationsdatei"
+  },
 
-    -- master (config + main)
-    ["/xreactor/config_master.lua"] = {
-      ver   = "2025-10-15-04", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/config_master.lua"
-    },
-    ["/xreactor/master"] = {
-      ver   = "2025-10-15-04", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/master.lua"
-    },
+  -- =========================================================
+  -- NODE (Erfassungseinheit)
+  -- =========================================================
+  ["/xreactor/node"] = {
+    ver   = "2025-10-15-03",
+    roles = {"node"},
+    url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/node.lua",
+    desc  = "XReactor Node – scannt BigReactors & Turbinen, sendet Telemetrie"
+  },
 
-    -- master module (direkt unter /xreactor/)
-    ["/xreactor/sequencer.lua"] = {
-      ver   = "2025-10-15-03", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/sequencer.lua"
-    },
-    ["/xreactor/playbooks.lua"] = {
-      ver   = "2025-10-15-03", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/playbooks.lua"
-    },
-    ["/xreactor/matrix_core.lua"] = {
-      ver   = "2025-10-15-02", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/matrix_core.lua"
-    },
-    ["/xreactor/fuel_core.lua"] = {
-      ver   = "2025-10-15-02", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/fuel_core.lua"
-    },
-    ["/xreactor/waste_core.lua"] = {
-      ver   = "2025-10-15-02", roles = {"master"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/waste_core.lua"
-    },
+  ["/xreactor/config_node.lua"] = {
+    ver   = "2025-10-15-02",
+    roles = {"node"},
+    url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/config_node.lua",
+    desc  = "Node-Konfigurationsdatei (Modem, Monitor, Auth usw.)"
+  },
 
-    -- node
-    ["/xreactor/config_node.lua"] = {
-      ver   = "2025-10-15-01", roles = {"node"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/config_node.lua"
-    },
-    ["/xreactor/node"] = {
-      ver   = "2025-10-15-02", roles = {"node"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/node.lua"
-    },
+  -- =========================================================
+  -- DEBUG TOOL
+  -- =========================================================
+  ["/xreactor/debug"] = {
+    ver   = "2025-10-15-01",
+    roles = {"debug"},
+    url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/debug/debug.lua",
+    desc  = "Peripherie- und Netzwerk-Debugger für Nodes"
+  },
 
-    -- node debug (NEU)
-    ["/xreactor/debug.lua"] = {
-      ver   = "2025-10-15-02", roles = {"node"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/debug.lua"
-    },
+  -- =========================================================
+  -- INSTALLER (Selbstupdate & AutoStart)
+  -- =========================================================
+  ["/xreactor/installer.lua"] = {
+    ver   = "2025-10-15-01",
+    roles = {"master","node","debug"},
+    url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/installer.lua",
+    desc  = "Installer – lädt & aktualisiert alle Komponenten"
+  },
 
-    -- supply (optional)
-    ["/xreactor/config_supply.lua"] = {
-      ver   = "2025-10-15-01", roles = {"supply"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/supply/config_supply.lua"
-    },
-    ["/xreactor/supply"] = {
-      ver   = "2025-10-15-01", roles = {"supply"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/supply/supply.lua"
-    },
+  ["/startup.lua"] = {
+    ver   = "2025-10-15-01",
+    roles = {"master","node"},
+    url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/startup.lua",
+    desc  = "Startskript: Automatischer Start von XReactor je nach Rolle"
+  },
 
-    -- self-update
-    ["/installer.lua"] = {
-      ver   = "2025-10-15-02", roles = {"all"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/installer.lua"
-    },
-    ["/xreactor/.installed_manifest.lua"] = {
-      ver   = "meta", roles = {"all"},
-      url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
-    }
+  -- =========================================================
+  -- META
+  -- =========================================================
+  ["_meta"] = {
+    repo  = "https://github.com/ItIsYe/ExtreamReactor-Controller-V2",
+    maintainer = "ItIsYe",
+    last_update = "2025-10-16",
   }
 }
