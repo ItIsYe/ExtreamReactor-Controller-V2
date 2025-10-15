@@ -1,4 +1,4 @@
--- devices.lua — discovery + safe getters for reactors/turbines/battery/matrix
+-- devices.lua — discovery + safe getters for reactors/turbines/battery/matrix (Phase B)
 local M = {}
 
 local state = { reactors={}, turbines={}, battery=nil, matrices={} }
@@ -40,7 +40,6 @@ function M.discover()
       end
 
     else
-      -- generic battery/energy cell
       local b = peripheral.wrap(p)
       if b and (has(b,"getEnergyStored") or has(b,"getEnergy") or has(b,"getStored")) then
         state.battery = state.battery or {name=p, dev=b}
@@ -50,9 +49,7 @@ function M.discover()
   return state
 end
 
--- battery/matrix SoC (best effort)
 function M.read_soc()
-  -- prefer matrix if present
   if state.matrices[1] then
     local m = state.matrices[1].dev
     local stored = safe(m,"getEnergy") or safe(m,"getEnergyStored")
@@ -68,7 +65,6 @@ function M.read_soc()
   return nil
 end
 
--- aggregate turbines
 function M.read_turbines(turbine_list)
   local list = turbine_list or state.turbines
   local rpm_sum, rpm_cnt, steam_sum = 0, 0, 0
@@ -82,16 +78,15 @@ function M.read_turbines(turbine_list)
   return (rpm_cnt>0 and (rpm_sum/rpm_cnt) or 0), steam_sum, #list
 end
 
--- read reactor core info (first param may be a reactor dev)
 local function read_reactor_core(r)
   if not r then return nil end
   return {
-    active = (safe(r,"getActive")==true),
-    temp   = safe(r,"getCasingTemperature") or safe(r,"getTemperature"),
-    fuel   = safe(r,"getFuelAmount") or safe(r,"getFuel") or 0,
+    active   = (safe(r,"getActive")==true),
+    temp     = safe(r,"getCasingTemperature") or safe(r,"getTemperature"),
+    fuel     = safe(r,"getFuelAmount") or safe(r,"getFuel") or 0,
     fuel_cap = safe(r,"getFuelAmountMax") or safe(r,"getFuelCapacity") or 0,
-    waste  = safe(r,"getWasteAmount") or 0,
-    burn   = safe(r,"getBurnedFuelLastTick") or 0,
+    waste    = safe(r,"getWasteAmount") or 0,
+    burn     = safe(r,"getBurnedFuelLastTick") or 0,
   }
 end
 
@@ -102,7 +97,9 @@ function M.read_reactors()
     table.insert(out, {
       name=R.name,
       active=core.active, temp=core.temp, fuel=core.fuel, fuel_cap=core.fuel_cap,
-      waste=core.waste, burn_rate=core.burn, fuel_pct=(core.fuel_cap and core.fuel_cap>0) and (core.fuel/core.fuel_cap) or nil,
+      waste=core.waste, burn_rate=core.burn,
+      fuel_pct=(core.fuel_cap and core.fuel_cap>0) and (core.fuel/core.fuel_cap) or nil,
+      waste_pct=(core.fuel_cap and core.fuel_cap>0) and (core.waste/core.fuel_cap) or nil, -- heuristic
     })
   end
   return out
@@ -110,7 +107,6 @@ end
 
 function M.get_state() return state end
 
--- basic control primitives (best effort)
 function M.reactor_set_active(rdev, on)
   if rdev and has(rdev,"setActive") then pcall(rdev.setActive, on) end
 end
