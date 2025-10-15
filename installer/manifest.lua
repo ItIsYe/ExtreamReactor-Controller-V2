@@ -1,5 +1,5 @@
 return {
-  version = "2025-10-15-PhaseD-01",
+  version = "2025-10-15-PhaseD-02",
 
   startup = {
     master = "/xreactor/master",
@@ -28,21 +28,23 @@ return {
     ["/xreactor/shared/ha.lua"]         = { ver="2025-10-15-01", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/ha.lua" },
 
-    -- master
+    -- master config + main
     ["/xreactor/config_master.lua"]     = { ver="2025-10-15-04", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/config_master.lua" },
     ["/xreactor/master"]                = { ver="2025-10-15-04", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/master.lua" },
-    ["/xreactor/master/fuel_core.lua"]  = { ver="2025-10-15-01", roles={"master"},
-      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/fuel_core.lua" },
-    ["/xreactor/master/waste_core.lua"] = { ver="2025-10-15-01", roles={"master"},
-      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/waste_core.lua" },
-    ["/xreactor/master/sequencer.lua"]  = { ver="2025-10-15-01", roles={"master"},
+
+    -- master modules (KORRIGIERTE PFADe → direkt unter /xreactor/)
+    ["/xreactor/sequencer.lua"]         = { ver="2025-10-15-03", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/sequencer.lua" },
-    ["/xreactor/master/playbooks.lua"]  = { ver="2025-10-15-01", roles={"master"},
+    ["/xreactor/playbooks.lua"]         = { ver="2025-10-15-03", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/playbooks.lua" },
-    ["/xreactor/master/matrix_core.lua"]= { ver="2025-10-15-01", roles={"master"},
+    ["/xreactor/matrix_core.lua"]       = { ver="2025-10-15-02", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/matrix_core.lua" },
+    ["/xreactor/fuel_core.lua"]         = { ver="2025-10-15-02", roles={"master"},
+      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/fuel_core.lua" },
+    ["/xreactor/waste_core.lua"]        = { ver="2025-10-15-02", roles={"master"},
+      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/waste_core.lua" },
 
     -- node
     ["/xreactor/config_node.lua"]       = { ver="2025-10-15-01", roles={"node"},
@@ -56,7 +58,7 @@ return {
     ["/xreactor/supply"]                = { ver="2025-10-15-01", roles={"supply"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/supply/supply.lua" },
 
-    -- self-update (FIXED URLs → liegen im Ordner installer/)
+    -- self-update (Installer & Manifest)
     ["/installer.lua"] = {
       ver="2025-10-15-02", roles={"all"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/installer.lua"
