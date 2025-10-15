@@ -53,7 +53,7 @@ return {
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/node.lua" },
 
     -- node debug (NEU)
-    ["/xreactor/debug.lua"]             = { ver="2025-10-15-01", roles={"node"},
+    ["/xreactor/debug.lua"]             = { ver=""2025-10-15-02"", roles={"node"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/debug.lua" },
 
     -- supply (optional)
