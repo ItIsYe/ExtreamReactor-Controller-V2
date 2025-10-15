@@ -1,5 +1,5 @@
 return {
-  version = "2025-10-15-PhaseD-02",
+  version = "2025-10-15-PhaseE-01",
 
   startup = {
     master = "/xreactor/master",
@@ -28,13 +28,13 @@ return {
     ["/xreactor/shared/ha.lua"]         = { ver="2025-10-15-01", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/ha.lua" },
 
-    -- master config + main
+    -- master (config + main)
     ["/xreactor/config_master.lua"]     = { ver="2025-10-15-04", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/config_master.lua" },
     ["/xreactor/master"]                = { ver="2025-10-15-04", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/master.lua" },
 
-    -- master modules (KORRIGIERTE PFADe → direkt unter /xreactor/)
+    -- master modules (direkt unter /xreactor/)
     ["/xreactor/sequencer.lua"]         = { ver="2025-10-15-03", roles={"master"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/sequencer.lua" },
     ["/xreactor/playbooks.lua"]         = { ver="2025-10-15-03", roles={"master"},
@@ -52,13 +52,17 @@ return {
     ["/xreactor/node"]                  = { ver="2025-10-15-02", roles={"node"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/node.lua" },
 
-    -- supply
+    -- node debug (NEU)
+    ["/xreactor/debug.lua"]             = { ver="2025-10-15-01", roles={"node"},
+      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/debug.lua" },
+
+    -- supply (optional)
     ["/xreactor/config_supply.lua"]     = { ver="2025-10-15-01", roles={"supply"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/supply/config_supply.lua" },
     ["/xreactor/supply"]                = { ver="2025-10-15-01", roles={"supply"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/supply/supply.lua" },
 
-    -- self-update (Installer & Manifest)
+    -- self-update
     ["/installer.lua"] = {
       ver="2025-10-15-02", roles={"all"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/installer.lua"
