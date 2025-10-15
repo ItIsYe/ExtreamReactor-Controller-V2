@@ -1,8 +1,12 @@
--- /src/node/debug.lua
--- Zeigt alle erkannten Peripherals und ihre Methoden (für Diagnose)
+-- =========================================================
+-- XReactor Node Debug Utility
+-- Zeigt verfügbare Peripherals und deren Methoden an
+-- =========================================================
 
 print("=== XReactor Node Debug ===")
+
 local sides = {"top","bottom","left","right","front","back"}
+
 for _,side in ipairs(sides) do
     local p = peripheral.wrap(side)
     if p then
