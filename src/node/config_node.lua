@@ -1,7 +1,10 @@
+-- XReactor Node Config
 return {
-  node_title   = "Node@"..os.getComputerID(),
-  auth_token   = "changeme",
-
+  modem_side     = "right",   -- Modem zum Master (wireless oder wired)
+  monitor_side   = "bottom",  -- optional, nil wenn keiner
+  telem_interval = 2,
+  auth_token     = "xreactor"
+}
   -- Peripherie
   modem_comm   = "right",   -- wireless → Master
   wired_side   = "top",     -- wired → reactors/turbines/matrix
