@@ -1,14 +1,12 @@
 return {
   version = "2025-10-15-PhaseD-01",
 
-  -- welche Datei ist die Start-Exe je Rolle?
   startup = {
     master = "/xreactor/master",
     node   = "/xreactor/node",
     supply = "/xreactor/supply",
   },
 
-  -- alle Dateien mit Zielpfad → {url, ver, roles}
   files = {
     -- shared
     ["/xreactor/shared/storage.lua"]    = { ver="2025-10-15-01", roles={"all"},
@@ -58,10 +56,14 @@ return {
     ["/xreactor/supply"]                = { ver="2025-10-15-01", roles={"supply"},
       url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/supply/supply.lua" },
 
-    -- (optional) installer selbst → so kann er sich updaten
-    ["/installer.lua"]                  = { ver="2025-10-15-02", roles={"all"},
-      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer.lua" },
-    ["/xreactor/.installed_manifest.lua"]= { ver="meta", roles={"all"},
-      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/manifest.lua" }, -- nur Referenz
+    -- self-update (FIXED URLs → liegen im Ordner installer/)
+    ["/installer.lua"] = {
+      ver="2025-10-15-02", roles={"all"},
+      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/installer.lua"
+    },
+    ["/xreactor/.installed_manifest.lua"] = {
+      ver="meta", roles={"all"},
+      url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
+    },
   }
 }
