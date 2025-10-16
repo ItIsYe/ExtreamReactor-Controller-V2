@@ -1,247 +1,195 @@
--- installer.lua — XReactor A–D Installer & Updater (role-aware, versioned)
--- Lädt ein Manifest von GitHub, vergleicht Versionen und installiert/updated nur nötige Dateien.
--- Erstinstallation: fragt Rolle ab, legt Ordner an und erstellt ein Startup (falls noch nicht vorhanden).
--- Update: lässt vorhandene config_*.lua unberührt (nur wenn nicht vorhanden, werden Templates gelegt).
+-- XReactor Installer (Manifest v2)
+-- - arbeitet mit installer/manifest.lua, das eine Tabelle von Zielpfad -> {ver, roles, url, desc} zurückgibt
+-- - fragt einmalig Rolle ab (master/node) und speichert sie
+-- - lädt nur Dateien, deren roles die eigene Rolle enthalten (oder "all")
+-- - vergleicht Versionen als Strings (lexikografisch), lädt nur neuere
+-- - überschreibt bestehende config_* NICHT (nur wenn sie fehlen)
 
-local BASE = "/xreactor"
-local LOCAL_MAN_PATH = BASE.."/.installed_manifest.lua"
+local BASE                = "/xreactor"
+local LOCAL_STATE_PATH    = BASE.."/.installed_manifest.lua"
+local DEFAULT_REMOTE_MAN  = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
 
--- >>> URL zu DEINEM Manifest im Repo (raw):
-local REMOTE_MAN_URL =
-  "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
-
--- ------------- helpers -------------
-local function ensure_dir(path)
+-- ---------- utils ----------
+local function ensure_dir_for(path)
   local dir = fs.getDir(path)
-  if dir and dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+  if dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+end
+
+local function read_all(fh)
+  local s = fh.readAll() or ""
+  fh.close()
+  return s
 end
 
 local function fetch(url)
   local ok, res = pcall(http.get, url, nil, true)
   if not ok or not res then return nil, "http_get_failed" end
-  local s = res.readAll() or ""
-  res.close()
-  if #s == 0 then return nil, "empty_response" end
+  local s = read_all(res)
+  if s == "" then return nil, "empty_response" end
   return s
 end
 
-local function parse_manifest_lua(s)
-  -- erwartet: 'return { ... }'
-  local fn, err = load(s, "manifest", "t", {})
+local function load_manifest_lua(text)
+  local fn, err = load(text, "manifest", "t", {})
   if not fn then return nil, "manifest_load_error: "..tostring(err) end
   local ok, tbl = pcall(fn)
   if not ok or type(tbl) ~= "table" then return nil, "manifest_eval_error" end
   return tbl
 end
 
-local function load_local_manifest()
-  if not fs.exists(LOCAL_MAN_PATH) then return nil end
-  local f = fs.open(LOCAL_MAN_PATH, "r")
-  if not f then return nil end
-  local s = f.readAll() or ""
-  f.close()
-  if s == "" then return nil end
-  return parse_manifest_lua(s)
+local function load_local_state()
+  if not fs.exists(LOCAL_STATE_PATH) then return { role=nil, files={} } end
+  local fh = fs.open(LOCAL_STATE_PATH, "r")
+  if not fh then return { role=nil, files={} } end
+  local txt = read_all(fh)
+  if txt == "" then return { role=nil, files={} } end
+  local fn = load(txt, "local_state", "t", {})
+  local ok, st = pcall(fn)
+  if not ok or type(st)~="table" then return { role=nil, files={} } end
+  st.files = st.files or {}
+  return st
 end
 
-local function save_local_manifest(tbl)
-  ensure_dir(LOCAL_MAN_PATH)
-  local f = fs.open(LOCAL_MAN_PATH, "w")
-  if not f then return false, "open_failed" end
-  f.write("return "..textutils.serialize(tbl))
-  f.close()
-  return true
-end
-
-local function write_file(path, data, overwrite)
-  overwrite = overwrite ~= false
-  if (not overwrite) and fs.exists(path) then
-    return true, "skipped_exists"
-  end
-  ensure_dir(path)
-  local f = fs.open(path, "w")
-  if not f then return false, "open_failed" end
-  f.write(data)
-  f.close()
+local function save_local_state(st)
+  ensure_dir_for(LOCAL_STATE_PATH)
+  local fh = fs.open(LOCAL_STATE_PATH, "w")
+  if not fh then return false, "open_failed" end
+  fh.write("return "..textutils.serialize(st))
+  fh.close()
   return true
 end
 
 local function ver_gt(a, b)
-  if not a and b then return true end
-  if a and not b then return false end
-  if not a and not b then return false end
-  -- String-Lex-Vergleich (Manifest-Versionen sollten chronologisch sortierbare Strings sein)
-  return tostring(a) > tostring(b)
+  if not a and b then return true end  -- remote has version, local none
+  if a and not b then return false end -- local has version, remote none (treat as not greater)
+  if not a and not b then return true end
+  return tostring(a) > tostring(b)     -- simple lexicographic compare (use sortable strings like 2025-10-16-01)
+end
+
+local function has_role(entry_roles, role)
+  if not entry_roles or #entry_roles==0 then return true end
+  for _,r in ipairs(entry_roles) do
+    if r=="all" or r==role then return true end
+  end
+  return false
 end
 
 local function ask(prompt, def)
-  term.setTextColor(colors.white)
   io.write(prompt)
   if def then io.write(" ["..def.."]") end
   io.write(": ")
   local s = read()
-  if s == "" and def then return def end
+  if s=="" and def then return def end
   return s
 end
 
-local function pick_role()
+local function choose_role()
   print("Welche Rolle soll dieser Computer haben?")
   print("  1) Master")
   print("  2) Node")
-  print("  3) Supply (ME/RS)")
-  local choice = ask("Auswahl 1/2/3", "1")
-  if choice == "2" then return "node"
-  elseif choice == "3" then return "supply"
-  else return "master" end
+  local c = ask("Auswahl 1/2", "1")
+  if c=="2" then return "node" else return "master" end
 end
 
-local function create_startup(role, exe)
-  if fs.exists("startup") then
-    -- belasse existierendes Startup
-    return
+local function write_file(path, data, overwrite)
+  overwrite = overwrite ~= false
+  if not overwrite and fs.exists(path) then
+    return true, "skipped_exists"
   end
-  local line = ('shell.run("%s")'):format(exe)
-  local ok, err = write_file("startup", line, true)
-  if ok then print("Startup erstellt → "..exe) else print("Startup NICHT erstellt: "..tostring(err)) end
+  ensure_dir_for(path)
+  local fh = fs.open(path, "w")
+  if not fh then return false, "open_failed" end
+  fh.write(data)
+  fh.close()
+  return true
 end
 
--- ------------- main -------------
-print("XReactor Installer/Updater — lädt Manifest…")
+local function is_config_path(path)
+  return path=="/xreactor/config_master.lua"
+      or path=="/xreactor/config_node.lua"
+      or path=="/xreactor/config_supply.lua"
+      or path:match("/configs?/") ~= nil
+end
+
+-- ---------- main ----------
+term.setTextColor(colors.white)
+print("XReactor Installer (Manifest v2)")
 if not http then
-  print("Fehler: http API ist deaktiviert. Bitte auf dem Server erlauben (enableCommandBlock? / enableAPI?).")
+  print("Fehler: http API deaktiviert. Bitte im Server-Config HTTP erlauben.")
   return
 end
 
-local remoteText, err = fetch(REMOTE_MAN_URL)
-if not remoteText then
-  print("Fehler beim Laden des Manifests: "..tostring(err))
+-- Manifest URL (optional Argument 1)
+local REMOTE_MAN_URL = ({...})[1] or DEFAULT_REMOTE_MAN
+print("Manifest laden: "..REMOTE_MAN_URL)
+local man_text, err = fetch(REMOTE_MAN_URL)
+if not man_text then
+  print("Fehler beim Manifest-Download: "..tostring(err))
+  return
+end
+local MAN, perr = load_manifest_lua(man_text)
+if not MAN then
+  print("Manifest-Fehler: "..tostring(perr))
   return
 end
 
-local REMOTE_MAN, perr = parse_manifest_lua(remoteText)
-if not REMOTE_MAN then
-  print("Manifest-Parsefehler: "..tostring(perr))
-  return
-end
-
--- Rolle bestimmen (aus lokalem Manifest, sonst abfragen)
-local role = nil
-local LOCAL_MAN = load_local_manifest()
-if LOCAL_MAN and LOCAL_MAN.installed_role then
-  role = LOCAL_MAN.installed_role
-  print("Gefundene installierte Rolle: "..role)
+-- Local state + role
+local STATE = load_local_state()
+if not STATE.role then
+  STATE.role = choose_role()
+  save_local_state(STATE)
+  print("Rolle gespeichert: "..STATE.role)
 else
-  role = pick_role()
+  print("Gefundene Rolle: "..STATE.role)
 end
 
--- Auth-Token (optional) einmalig setzen?
--- Wenn config bereits existiert, NICHT überschreiben.
-local function maybe_seed_configs(role)
-  if role == "master" then
-    if not fs.exists(BASE.."/config_master.lua") then
-      local url = REMOTE_MAN.files["/xreactor/config_master.lua"].url
-      local txt = fetch(url)
-      if txt then write_file(BASE.."/config_master.lua", txt, false) end
-      print("config_master.lua (neu) angelegt.")
-      -- optional: Token setzen
-      local tok = ask("Auth-Token für Master setzen (leer = 'changeme')", "changeme")
-      if tok ~= "" then
-        -- quick replace
-        local s = fetch(url) or ""
-        s = s:gsub('auth_token%s*=%s*"[^"]*"', 'auth_token = "'..tok..'"')
-        write_file(BASE.."/config_master.lua", s, true)
+-- Iterate entries
+local installed, updated, skipped = 0, 0, 0
+for target, meta in pairs(MAN) do
+  -- meta = {ver, roles, url, desc}
+  if type(meta)=="table" and meta.url then
+    -- Filter by role
+    if has_role(meta.roles, STATE.role) or target=="/xreactor/installer.lua" then
+      local remote_ver = meta.ver
+      local local_ver  = STATE.files[target] and STATE.files[target].ver or nil
+
+      -- Configs: don't overwrite existing
+      local want_overwrite = true
+      if is_config_path(target) and fs.exists(target) then
+        want_overwrite = false
       end
-    else
-      print("config_master.lua existiert, lasse unverändert.")
-    end
-  elseif role == "node" then
-    if not fs.exists(BASE.."/config_node.lua") then
-      local url = REMOTE_MAN.files["/xreactor/config_node.lua"].url
-      local txt = fetch(url)
-      if txt then write_file(BASE.."/config_node.lua", txt, false) end
-      print("config_node.lua (neu) angelegt.")
-      local tok = ask("Auth-Token für Node setzen (leer = 'changeme')", "changeme")
-      if tok ~= "" then
-        local s = fetch(url) or ""
-        s = s:gsub('auth_token%s*=%s*"[^"]*"', 'auth_token = "'..tok..'"')
-        write_file(BASE.."/config_node.lua", s, true)
-      end
-    else
-      print("config_node.lua existiert, lasse unverändert.")
-    end
-  elseif role == "supply" then
-    if not fs.exists(BASE.."/config_supply.lua") then
-      local url = REMOTE_MAN.files["/xreactor/config_supply.lua"].url
-      local txt = fetch(url)
-      if txt then write_file(BASE.."/config_supply.lua", txt, false) end
-      print("config_supply.lua (neu) angelegt.")
-      local tok = ask("Auth-Token für Supply setzen (leer = 'changeme')", "changeme")
-      if tok ~= "" then
-        local s = fetch(url) or ""
-        s = s:gsub('auth_token%s*=%s*"[^"]*"', 'auth_token = "'..tok..'"')
-        write_file(BASE.."/config_supply.lua", s, true)
-      end
-    else
-      print("config_supply.lua existiert, lasse unverändert.")
-    end
-  end
-end
 
--- Liste relevanter Dateien für diese Rolle aus Manifest bauen
-local function files_for_role(man)
-  local list = {}
-  for path, meta in pairs(man.files or {}) do
-    local roles = meta.roles or {"all"}
-    local match = false
-    for _,r in ipairs(roles) do if r=="all" or r==role then match=true end end
-    if match then list[path] = meta end
-  end
-  return list
-end
-
-local ROLE_FILES = files_for_role(REMOTE_MAN)
-local LOCAL_VER = (LOCAL_MAN and LOCAL_MAN.files) or {}
-
--- Install/Update
-local updated, skipped, installed = 0,0,0
-for path, meta in pairs(ROLE_FILES) do
-  local remote_ver = meta.ver
-  local local_ver  = LOCAL_VER[path] and LOCAL_VER[path].ver or nil
-
-  local need = (not fs.exists(path)) or ver_gt(remote_ver, local_ver)
-  if need then
-    local data, ferr = fetch(meta.url)
-    if not data then
-      print("FEHLER: konnte nicht laden: "..path.." ("..tostring(ferr)..")")
-    else
-      local ok, werr = write_file(path, data, true)
-      if ok then
-        if fs.exists(path) then
-          if local_ver then updated=updated+1 else installed=installed+1 end
-          print(((local_ver and "Updated ") or "Installed ")..path.."  → v"..tostring(remote_ver))
+      local need = (not fs.exists(target)) or ver_gt(remote_ver, local_ver)
+      if need then
+        local data, ferr = fetch(meta.url)
+        if not data then
+          print("FEHLER: Download fehlgeschlagen: "..target.." ("..tostring(ferr)..")")
+        else
+          local ok, werr = write_file(target, data, want_overwrite)
+          if ok then
+            if local_ver then updated = updated + 1 else installed = installed + 1 end
+            print(((local_ver and "Updated ") or "Installed ")..target.."  → v"..tostring(remote_ver)
+              .. (not want_overwrite and " (bestehende Config beibehalten)" or ""))
+            -- Store version (even if config skipped, mark current desired version for future compares)
+            STATE.files[target] = { ver = remote_ver }
+          else
+            print("FEHLER: Schreiben fehlgeschlagen: "..target.." ("..tostring(werr)..")")
+          end
         end
       else
-        print("FEHLER: konnte nicht schreiben: "..path.." ("..tostring(werr)..")")
+        skipped = skipped + 1
       end
+    else
+      -- role-mismatch → skip silently
     end
-  else
-    skipped = skipped + 1
   end
 end
 
--- Configs ggf. neu anlegen (ohne vorhandenes zu überschreiben) + optional Token setzen
-maybe_seed_configs(role)
+-- Save state
+save_local_state(STATE)
 
--- Startup: nur erstellen, wenn noch keins vorhanden
-local exe = REMOTE_MAN.startup[role]
-if exe then create_startup(role, exe) end
-
--- Neues lokales Manifest speichern (nur die tatsächlich installierten Role-Dateien + Versionen)
-local NEW_LOCAL = { installed_role = role, manifest_version = REMOTE_MAN.version, files = {} }
-for path, meta in pairs(ROLE_FILES) do
-  NEW_LOCAL.files[path] = { ver = meta.ver }
-end
-save_local_manifest(NEW_LOCAL)
-
-print("Fertig. Neu: "..installed..", Updates: "..updated..", Übersprungen: "..skipped)
-print("Rolle: "..role.." | Manifest v"..tostring(REMOTE_MAN.version))
+print(("\nFertig. Neu: %d, Updates: %d, Übersprungen: %d"):format(installed, updated, skipped))
+print("Rolle: "..STATE.role)
+print("Hinweis: Config-Dateien werden nur bei Erstinstallation geschrieben.")
+print("Tipp: Du kannst eine alternative Manifest-URL als Argument übergeben.")
+print("      Beispiel: lua installer/installer.lua https://raw.githubusercontent.com/.../manifest.lua")
