@@ -1,5 +1,5 @@
 --========================================================
--- XReactor • MASTER  (mit Node-Auswahlliste + Matrix-Anzeige)
+-- XReactor • MASTER  (Node-Liste + Matrix + Monitor-Scan via Modem)
 --========================================================
 
 -- ---------- Config laden ----------
@@ -9,15 +9,18 @@ local CFG = {
   views = { dashboard=nil, control=nil, config=nil },
   redraw_interval = 0.25,
   telem_timeout_s = 15,
+  monitor_wired_side = nil,        -- NEU: Wired-Modem-Seite für Monitor-Scan
   matrix = { enable=true, name=nil, wired_side=nil },
 }
 do
   local ok,t = pcall(dofile,"/xreactor/config_master.lua")
-  if ok and type(t)=="table" then for k,v in pairs(t) do
-    if k=="views" and type(v)=="table" then CFG.views=v
-    elseif k=="matrix" and type(v)=="table" then for kk,vv in pairs(v) do CFG.matrix[kk]=vv end
-    else CFG[k]=v end
-  end end
+  if ok and type(t)=="table" then
+    for k,v in pairs(t) do
+      if k=="views" and type(v)=="table" then CFG.views=v
+      elseif k=="matrix" and type(v)=="table" then for kk,vv in pairs(v) do CFG.matrix[kk]=vv end
+      else CFG[k]=v end
+    end
+  end
 end
 
 -- Persistente UI-Zuordnung
@@ -77,7 +80,30 @@ end
 local ok_gui, GUI = pcall(require, "xreactor.shared.gui")
 if not ok_gui then GUI = dofile("/xreactor/shared/gui.lua") end
 
--- Router je View
+-- ---------- Monitor-Suche (lokal + remote über Wired-Modem) ----------
+local function list_monitors()
+  local list = {}
+
+  -- lokale Monitore
+  for _,n in ipairs(peripheral.getNames()) do
+    if peripheral.getType(n)=="monitor" then table.insert(list, n) end
+  end
+
+  -- remote Monitore über Wired-Modem
+  if CFG.monitor_wired_side and peripheral.getType(CFG.monitor_wired_side)=="modem" then
+    local wm = peripheral.wrap(CFG.monitor_wired_side)
+    if wm and wm.getNamesRemote then
+      for _,rn in ipairs(wm.getNamesRemote()) do
+        if peripheral.getType(rn)=="monitor" then table.insert(list, rn) end
+      end
+    end
+  end
+
+  table.sort(list)
+  return list
+end
+
+-- ---------- Router je View ----------
 local routers = { dashboard=nil, control=nil, config=nil }
 local screens = { dashboard=nil, control=nil, config=nil }
 
@@ -94,31 +120,29 @@ local function node_ids_sorted()
 local function build_dashboard_screen()
   local s = GUI.mkScreen("dashboard", "Master ▢ Dashboard")
 
-  -- Linke Infos (Nodes + Turbinen/Produktion)
+  -- Links
   local kvR  = GUI.mkKV(2,3,28,"Reaktoren:", colors.cyan)
   local kvT  = GUI.mkKV(2,4,28,"Turbinen:",  colors.cyan)
   local kvP  = GUI.mkKV(2,6,28,"Power/t:",   colors.lime)
   local kvRPM= GUI.mkKV(2,7,28,"RPM∑:",      colors.lime)
 
-  -- Rechte Spalte: Matrix
+  -- Rechts: Matrix
   local lblM = GUI.mkLabel(32,3,"Induction Matrix", {color=colors.cyan})
   local kvMS = GUI.mkKV(32,4,28,"SoC:", colors.white)
   local kvMI = GUI.mkKV(32,5,28,"In/t:", colors.white)
   local kvMO = GUI.mkKV(32,6,28,"Out/t:", colors.white)
   local barM = GUI.mkBar(32,7,28, colors.lime)
 
-  -- Buttons unten rechts (nur Hinweise, Navigation pro Monitor erfolgt per Monitor-Zuweisung)
+  -- Info-Buttons
   local btnCtl = GUI.mkButton(32,10,13,3,"Kontrolle", function()
     term.setBackgroundColor(colors.black); term.setTextColor(colors.white); term.clear()
     print("Die Control-View zeigt auf dem zugewiesenen Monitor.")
-    print("Monitor-Zuweisung in 'Konfiguration' möglich.")
-    os.sleep(1)
+    print("Monitor-Zuweisung in 'Konfiguration' möglich."); os.sleep(1)
   end)
   local btnCfg = GUI.mkButton(47,10,13,3,"Konfig", function()
     term.setBackgroundColor(colors.black); term.setTextColor(colors.white); term.clear()
     print("Die Config-View zeigt auf dem zugewiesenen Monitor.")
-    print("Monitor-Zuweisung in 'Konfiguration' möglich.")
-    os.sleep(1)
+    print("Monitor-Zuweisung in 'Konfiguration' möglich."); os.sleep(1)
   end)
 
   s:add(kvR); s:add(kvT); s:add(kvP); s:add(kvRPM)
@@ -139,9 +163,7 @@ local function build_dashboard_screen()
       kvMO.props.value = tostring(matrix_last.outFEt or 0) .. " FE/t"
       barM.props.value = matrix_last.soc or 0
     else
-      kvMS.props.value = "—"
-      kvMI.props.value = "—"
-      kvMO.props.value = "—"
+      kvMS.props.value, kvMI.props.value, kvMO.props.value = "—", "—", "—"
       barM.props.value = 0
     end
   end
@@ -260,33 +282,49 @@ local function build_config_screen()
   s:add(GUI.mkKV(2,8,36,"Mon Config:",    colors.white))
   s:add(GUI.mkKV(2,10,36,"Matrix Name:",  colors.cyan))
   s:add(GUI.mkKV(2,11,36,"Matrix Wired:", colors.cyan))
+  s:add(GUI.mkKV(2,13,36,"Mon-Wired-Side:", colors.cyan)) -- NEU
 
-  s:add(GUI.mkButton(2,13,16,3,"Monitore", function()
+  -- Monitore zuweisen (mit Liste inkl. remote via Wired-Modem)
+  s:add(GUI.mkButton(2,15,18,3,"Monitore", function()
     term.setCursorPos(1,1); term.setTextColor(colors.white); term.setBackgroundColor(colors.black); term.clear()
-    print("Monitore zuweisen (leer lassen zum Überspringen)")
-    local mons = { peripheral.find("monitor") }
-    print("Gefundene Monitore: "..#mons)
-    write("Dashboard Monitor-Name: "); local d = read()
-    write("Control   Monitor-Name: "); local c = read()
-    write("Config    Monitor-Name: "); local g = read()
-    if d~="" then CFG.views.dashboard = d end
-    if c~="" then CFG.views.control   = c end
-    if g~="" then CFG.views.config    = g end
+    print("Monitore zuweisen")
+    print("-----------------")
+    local mons = list_monitors()
+    if #mons==0 then
+      print("Keine Monitore gefunden. (Prüfe monitor_wired_side in config_master.lua)")
+    else
+      print("Gefundene Monitore:")
+      for i,name in ipairs(mons) do print(("[%2d] %s"):format(i,name)) end
+    end
+    print("")
+    local function pick(label, cur)
+      print(label.." (Index oder Name eingeben; leer = überspringen)")
+      if cur then print("Aktuell: "..tostring(cur)) end
+      write("> "); local v = read()
+      if v=="" then return cur end
+      local idx = tonumber(v)
+      if idx and mons[idx] then return mons[idx] end
+      return v
+    end
+    CFG.views.dashboard = pick("Dashboard Monitor", CFG.views.dashboard)
+    CFG.views.control   = pick("Control   Monitor", CFG.views.control)
+    CFG.views.config    = pick("Config    Monitor", CFG.views.config)
     save_json(UI_PATH, {views=CFG.views})
-    print("Gespeichert. ENTER…"); read()
+    print("\nGespeichert. ENTER…"); read()
   end, colors.cyan))
 
-  s:add(GUI.mkButton(20,13,16,3,"Matrix set", function()
+  -- Mon-Wired-Side setzen (falls remote-Monitore über ein bestimmtes Wired-Modem gehen)
+  s:add(GUI.mkButton(22,15,18,3,"Mon-Wired set", function()
     term.setCursorPos(1,1); term.setTextColor(colors.white); term.setBackgroundColor(colors.black); term.clear()
-    print("Matrix-Peripheral setzen (leer = auto-detect)")
-    write("Name: "); local n = read()
-    write("Wired-Side (z.B. left / leer): "); local w = read()
-    CFG.matrix.name = (n ~= "" and n) or nil
-    CFG.matrix.wired_side = (w ~= "" and w) or nil
+    print("Wired-Modem-Seite für Monitor-Scan setzen (leer = entfernen)")
+    print("Beispiele: left, right, top, bottom, back")
+    print("Aktuell: "..tostring(CFG.monitor_wired_side or "-"))
+    write("> "); local w = read()
+    CFG.monitor_wired_side = (w ~= "" and w) or nil
     print("Gespeichert. ENTER…"); read()
   end, colors.orange))
 
-  s:add(GUI.mkButton(38,13,12,3,"Zurück", function() end))
+  s:add(GUI.mkButton(42,15,12,3,"Zurück", function() end))
 
   s.onShow = function()
     s.widgets[1].props.value = CFG.modem_side
@@ -296,6 +334,7 @@ local function build_config_screen()
     s.widgets[5].props.value = CFG.views.config    or "-"
     s.widgets[6].props.value = CFG.matrix.name or "(auto)"
     s.widgets[7].props.value = CFG.matrix.wired_side or "-"
+    s.widgets[8].props.value = CFG.monitor_wired_side or "-"
   end
   return s
 end
@@ -311,7 +350,6 @@ end
 
 -- ---------- Netzwerk-Loop ----------
 local ui_msg, ui_msg_ts = "", 0
-
 local function rx_loop()
   while true do
     local id,msg = rednet.receive(1)
@@ -337,15 +375,11 @@ end
 local function draw_all()
   for _,r in pairs(routers) do if r then r:draw() end end
 end
-
 local function house_loop()
   local t0, tm = 0, 0
   while true do
     local now = os.clock()
-    if now - tm >= 1.0 then
-      poll_matrix_once()
-      tm = now
-    end
+    if now - tm >= 1.0 then poll_matrix_once(); tm = now end
     if now - t0 >= CFG.redraw_interval then
       mark_timeouts()
       if screens.dashboard then pcall(screens.dashboard.onShow, screens.dashboard) end
@@ -392,6 +426,6 @@ if not routers.control   then routers.control   = GUI.mkRouter({}); routers.cont
 if not routers.config    then routers.config    = GUI.mkRouter({}); routers.config:register(screens.config);     routers.config:show("config")     end
 
 -- ---------- Start ----------
-print(("Master gestartet #%d | Modem:%s | Matrix:%s")
-  :format(MASTER_ID, CFG.modem_side, CFG.matrix.name or "(auto)"))
+print(("Master gestartet #%d | Modem:%s | Mon-Wired:%s | Matrix:%s")
+  :format(MASTER_ID, CFG.modem_side, CFG.monitor_wired_side or "-", CFG.matrix.name or "(auto)"))
 parallel.waitForAny(rx_loop, house_loop, input_loop)
