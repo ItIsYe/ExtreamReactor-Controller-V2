@@ -18,13 +18,11 @@ return {
   },
 
   -- Monitore über Wired-Modem (für remote angeschlossene Monitore)
-  -- Setze hier die Seite deines WIRED-Modems (z. B. "left"), wenn deine Monitore
-  -- per Kabel im Netz hängen. Bei nil werden nur lokale Monitore gelistet.
-  monitor_wired_side = nil,
+  monitor_wired_side = nil,      -- z. B. "left" oder nil
 
   -- Mekanism Induction Matrix (optional)
   matrix = {
-    enable     = true,           -- Matrix anzeigen, wenn gefunden
+    enable     = true,
     name       = nil,            -- fester Peripheral-Name (oder nil = auto-find)
     wired_side = nil,            -- z. B. "left" falls über Wired-Modem erreichbar
   },
@@ -33,11 +31,22 @@ return {
   log_enabled = true,
   log_level   = "info",
 
-  -- Standard-Vorgaben für AutoScale (werden in /xreactor/ui_master.json pro View gespeichert)
-  -- desired_cols: Zielspaltenbreite; correction: +/-0.5 Schritte; manual: Fixskala wenn autoscale=false
+  -- AutoScale-Defaults (pro View; kann in /xreactor/ui_master.json überschrieben werden)
   default_view_scale = {
     dashboard = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
     control   = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
     config    = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
+  },
+
+  --======================================================
+  -- PHASE 1 • FUEL-MANAGEMENT (ohne ME-Anbindung)
+  --======================================================
+  fuel = {
+    enable       = true,   -- Master überwacht Fuel-Level & sendet FUEL_REQ
+    min_pct      = 20,     -- unter diesem % wird nachgefordert
+    target_pct   = 60,     -- Zielwert; Bedarf = Differenz bis target
+    request_unit = 4,      -- in Ingots pro Anfrage (Abrundung auf Einheit)
+    cooldown_s   = 90,     -- Cooldown pro Reaktor, um Spam zu vermeiden
+    supplier_tag = "any",  -- optional: Supplier-Gruppe/Tag (frei für Phase 2)
   },
 }
