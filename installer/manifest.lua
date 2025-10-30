@@ -1,6 +1,6 @@
 -- /installer/manifest.lua
 local manifest = {
-  manifest_version = "v2025-10-29",
+  manifest_version = "v2025-10-29-02",
   author = "ItIsYe + XReactor",
   repo   = "ItIsYe/ExtreamReactor-Controller-V2",
   branch = "main",
@@ -11,6 +11,7 @@ local manifest = {
     { dst="/xreactor/shared/storage.lua", url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/storage.lua", ver="2025-09-12-01" },
     { dst="/xreactor/shared/util.lua",    url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/util.lua",    ver="2025-09-12-01" },
     { dst="/xreactor/shared/gui.lua",     url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/gui.lua",     ver="2025-10-29-01", force=true },
+    { dst="/xreactor/shared/matrix.lua",  url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/shared/matrix.lua",  ver="2025-10-29-02", force=true },
   },
 
   -- Installer selbst
@@ -20,8 +21,8 @@ local manifest = {
 
   -- Master
   master = {
-    { dst="/xreactor/master.lua",        url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/master.lua",       ver="2025-10-29-01", force=true },
-    { dst="/xreactor/config_master.lua", url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/config_master.lua", ver="2025-10-15-01" },
+    { dst="/xreactor/master.lua",        url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/master.lua",       ver="2025-10-29-02", force=true },
+    { dst="/xreactor/config_master.lua", url="https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/master/config_master.lua", ver="2025-10-29-02", force=true },
   },
 
   -- Node
