@@ -2,34 +2,29 @@
 -- /src/master/config_master.lua
 -- XReactor • Master Konfigurationsdatei
 --========================================================
--- Diese Datei legt die grundlegende Kommunikation und GUI-Parameter
--- für den Master-Controller fest.
---
--- Sie wird beim Start von master.lua eingelesen und kann jederzeit
--- im laufenden Betrieb bearbeitet werden.
---========================================================
 
 return {
-  --======================================================
   -- Hardware & Kommunikation
-  --======================================================
-  modem_side      = "right",     -- Seite des Wireless-Modems für Rednet
-  auth_token      = "xreactor",  -- Muss mit Node-Config übereinstimmen!
+  modem_side      = "right",     -- Wireless-Modem (Rednet)
+  auth_token      = "xreactor",  -- muss mit Node-Config übereinstimmen
   telem_timeout_s = 15,          -- Sekunden bis Node als „offline“ gilt
 
-  --======================================================
   -- Anzeige & GUI
-  --======================================================
-  redraw_interval = 0.25,        -- Sekundentakt für GUI-Refresh
+  redraw_interval = 0.25,        -- GUI-Refresh-Intervall
   views = {
-    dashboard = nil,             -- z. B. "monitor_0"  → Haupt-Dashboard
-    control   = nil,             -- z. B. "monitor_1"  → Steuer-Panel
-    config    = nil,             -- z. B. "monitor_2"  → Konfigurations-Panel
+    dashboard = nil,             -- z. B. "monitor_0"
+    control   = nil,             -- z. B. "monitor_1"
+    config    = nil,             -- z. B. "monitor_2"
   },
 
-  --======================================================
-  -- (Optional) Logging / Debug
-  --======================================================
-  log_enabled = true,            -- einfache Terminal-Logs aktivieren
-  log_level   = "info",          -- info | warn | error
+  -- Mekanism Induction Matrix (optional)
+  matrix = {
+    enable     = true,           -- Matrix anzeigen, wenn gefunden
+    name       = nil,            -- fester Peripheral-Name (oder nil = auto-find)
+    wired_side = nil,            -- z. B. "left" falls über Wired-Modem erreichbar, sonst nil
+  },
+
+  -- Logging
+  log_enabled = true,
+  log_level   = "info",
 }
