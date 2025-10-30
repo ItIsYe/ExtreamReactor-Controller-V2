@@ -1,296 +1,282 @@
 --========================================================
--- XReactor • NODE
--- - Scannt Reaktoren/Turbinen via Wired/remote (per Modem)
--- - Sendet zyklisch TELEM an Master, empfängt CMD/AutoTune
--- - GUI: Node-Dashboard (frei zuweisbarer Monitor, persistiert)
--- Abhängigkeiten: /xreactor/shared/gui.lua, config_node.lua
+-- /src/node/node.lua
+-- XReactor • Reaktor/Turbinen-Node
+--  - Empfängt Master-CMDs (Priorität)
+--  - Fallback-Autosteuerung bei Master-Timeout
+--  - WASTE_DRAIN lokal am Reaktor-Port (CMD + Auto)
+--  - Telemetrie an Master
 --========================================================
 
--- ---------- Config ----------
-local CFG = {
-  modem_side    = "right",   -- Wireless/Rednet zum Master
-  wired_side    = "top",     -- Wired-Modem zu Reaktoren/Turbinen
-  monitor_view  = nil,       -- z.B. "monitor_0" (frei konfigurierbar)
-  auth_token    = "xreactor",
-  telem_interval= 1.0,
-  hello_interval= 5.0,
-}
-do
-  local ok,t = pcall(dofile,"/xreactor/config_node.lua")
-  if ok and type(t)=="table" then for k,v in pairs(t) do CFG[k]=v end end
-end
-
-local UI_PATH = "/xreactor/ui_node.json"
-local function load_json(p)
-  if not fs.exists(p) then return nil end
-  local f = fs.open(p,"r"); local s=f.readAll() or ""; f.close()
-  local ok, tbl = pcall(textutils.unserializeJSON, s)
-  return ok and tbl or nil
-end
-local function save_json(p, tbl)
-  local s = textutils.serializeJSON(tbl, true)
-  fs.makeDir(fs.getDir(p))
-  local f = fs.open(p,"w"); f.write(s or "{}"); f.close()
-end
-
-do
-  local ui = load_json(UI_PATH)
-  if ui and ui.monitor_view then CFG.monitor_view = ui.monitor_view end
-end
-
--- ---------- Peripherals ----------
-assert(peripheral.getType(CFG.modem_side)=="modem","Kein Wireless-Modem an "..tostring(CFG.modem_side))
-rednet.open(CFG.modem_side)
-
-local wired = nil
-if CFG.wired_side and peripheral.getType(CFG.wired_side)=="modem" then
-  wired = peripheral.wrap(CFG.wired_side)
-end
-
--- ---------- Device Scan ----------
-local DEV = {reactors={}, turbines={}}
-
-local function is_reactor(t) return t=="BigReactors-Reactor" or t=="BiggerReactors_Reactor" end
-local function is_turbine(t) return t=="BigReactors-Turbine" or t=="BiggerReactors_Turbine" end
-
-local function scan_devices()
-  DEV.reactors, DEV.turbines = {}, {}
-  if wired and wired.getNamesRemote then
-    for _,name in ipairs(wired.getNamesRemote()) do
-      local typ = peripheral.getType(name)
-      if is_reactor(typ) then table.insert(DEV.reactors, name)
-      elseif is_turbine(typ) then table.insert(DEV.turbines, name) end
-    end
-  else
-    -- Fallback: lokale Peripherals durchsuchen
-    for _,name in ipairs(peripheral.getNames()) do
-      local typ = peripheral.getType(name)
-      if is_reactor(typ) then table.insert(DEV.reactors, name)
-      elseif is_turbine(typ) then table.insert(DEV.turbines, name) end
+-----------------------------
+-- 1) Config laden
+-----------------------------
+local CFG = (function()
+  local t = {
+    auth_token = "xreactor",
+    modem_side = "right",
+    tick_rate_s = 1.0,
+    auto = {
+      enable=true, master_timeout_s=20,
+      rpm_target=1800, rpm_band=100, flow_step=25,
+      inductor_on_min_rpm=500,
+      reactor_keep_on=true,
+      waste_max_pct=60, waste_batch_amount=4000, waste_cooldown_s=90,
+    },
+    log = { enabled=false, level="info" },
+  }
+  local ok,c = pcall(dofile,"/xreactor/config_node.lua")
+  if ok and type(c)=="table" then
+    for k,v in pairs(c) do
+      if k=="auto" and type(v)=="table" then for kk,vv in pairs(v) do t.auto[kk]=vv end
+      elseif k=="log" and type(v)=="table" then for kk,vv in pairs(v) do t.log[kk]=vv end
+      else t[k]=v end
     end
   end
-end
-scan_devices()
+  return t
+end)()
 
--- ---------- Safe peripheral calls ----------
-local function pcallm(p, m, ...)
-  if not p or type(p[m])~="function" then return nil end
-  local ok,res = pcall(p[m], ...)
-  if ok then return res end
-  return nil
+-----------------------------
+-- 2) Rednet & Basics
+-----------------------------
+assert(peripheral.getType(CFG.modem_side)=="modem","Kein Modem an "..tostring(CFG.modem_side))
+rednet.open(CFG.modem_side)
+local NODE_ID = os.getComputerID()
+local function now_s() return os.epoch("utc")/1000 end
+
+local last_master_cmd_ts = now_s()   -- Zeitpunkt der letzten Master-Aktivität
+local function master_is_quiet()
+  return (now_s() - last_master_cmd_ts) >= (CFG.auto.master_timeout_s or 20)
 end
 
--- ---------- Read Telemetry ----------
-local function read_reactor(name)
-  local p = peripheral.wrap(name); if not p then return nil end
-  return {
-    name=name,
-    active=pcallm(p,"getActive") or false,
-    energy=pcallm(p,"getEnergyStored") or 0,
-    fuel=pcallm(p,"getFuelAmount") or 0,
-    fuel_max=pcallm(p,"getFuelAmountMax") or 0,
-    temp=pcallm(p,"getCasingTemperature") or 0,
-    hot=pcallm(p,"getHotFluidProducedLastTick") or 0,
-  }
+-----------------------------
+-- 3) Peripherals finden
+-----------------------------
+-- Passe diese Typen ggf. an dein Modpack an:
+local function pfind(typeName)
+  local t = { peripheral.find(typeName) }
+  return t
 end
-local function read_turbine(name)
-  local p = peripheral.wrap(name); if not p then return nil end
-  return {
-    name=name,
-    active=pcallm(p,"getActive") or false,
-    rpm=pcallm(p,"getRotorSpeed") or 0,
-    flow=pcallm(p,"getFluidFlowRate") or 0,
-    flow_max=pcallm(p,"getFluidFlowRateMax") or 0,
-    prod=pcallm(p,"getEnergyProducedLastTick") or 0,
-    inductor=pcallm(p,"getInductorEngaged") or false,
-    energy=pcallm(p,"getEnergyStored") or 0,
-  }
+
+-- Versuch 1: Bigger/Extreme Reactors Typen
+local REACTORS = pfind("BiggerReactors_Reactor")
+local TURBINES = pfind("BiggerReactors_Turbine")
+
+-- Falls nichts gefunden: generische Suche über Namen, die "reactor" / "turbine" enthalten könnten
+if #REACTORS==0 then
+  for _,name in ipairs(peripheral.getNames()) do
+    local tp = peripheral.getType(name) or ""
+    if tp:lower():find("reactor") then table.insert(REACTORS, peripheral.wrap(name)) end
+  end
 end
+if #TURBINES==0 then
+  for _,name in ipairs(peripheral.getNames()) do
+    local tp = peripheral.getType(name) or ""
+    if tp:lower():find("turbine") then table.insert(TURBINES, peripheral.wrap(name)) end
+  end
+end
+
+-----------------------------
+-- 4) Adapter-Funktionen
+-----------------------------
+-- Reaktor
+local function reactor_setActive(p, on)
+  if p.setActive then return pcall(p.setActive, on)
+  elseif p.activate and on then return pcall(p.activate)
+  elseif p.scram and (not on) then return pcall(p.scram)
+  end
+  return false,"no_method"
+end
+
+local function reactor_telemetry(p)
+  local t = {}
+  t.fuel      = (p.getFuelAmount and p.getFuelAmount()) or (p.getFuel and p.getFuel()) or 0
+  t.fuel_max  = (p.getFuelAmountMax and p.getFuelAmountMax()) or (p.getFuelCapacity and p.getFuelCapacity()) or 0
+  t.waste     = (p.getWasteAmount and p.getWasteAmount()) or (p.getWaste and p.getWaste()) or 0
+  t.waste_max = (p.getWasteAmountMax and p.getWasteAmountMax()) or (p.getWasteCapacity and p.getWasteCapacity()) or 0
+  t.active    = (p.getActive and p.getActive()) or (p.isActive and p.isActive()) or false
+  return t
+end
+
+-- Lokales Waste-DRAIN am Reaktor/Waste-Port
+local function reactor_waste_drain(p, amount)
+  -- Explizite Methoden
+  if p.ejectWaste then local ok = select(1, pcall(p.ejectWaste, tonumber(amount or 0))); if ok then return true,"ejectWaste" end end
+  if p.doWasteDrain then local ok = select(1, pcall(p.doWasteDrain, tonumber(amount or 0))); if ok then return true,"doWasteDrain" end end
+  if p.dumpWaste then local ok = select(1, pcall(p.dumpWaste)); if ok then return true,"dumpWaste" end end
+  -- Port toggle (falls es so etwas gibt)
+  if p.setWasteOutputEnabled and p.getWasteOutputEnabled then
+    local ok,on = pcall(p.getWasteOutputEnabled)
+    if ok and not on then pcall(p.setWasteOutputEnabled, true) end
+    os.sleep(0.2)
+    return true,"port_toggle"
+  end
+  return false,"no_method"
+end
+
+-- Turbine
+local function turbine_getRPM(p)
+  return (p.getRotorSpeed and p.getRotorSpeed()) or (p.getRPM and p.getRPM()) or 0
+end
+
+local function turbine_setInductor(p, on)
+  if p.setInductorEngaged then return pcall(p.setInductorEngaged, on) end
+  return false,"no_method"
+end
+
+local function turbine_setFlow(p, flow)
+  -- Manche Implementationen haben setFlowRate; sonst nichts tun.
+  if p.setFlowRate then return pcall(p.setFlowRate, math.max(0, math.floor(flow or 0))) end
+  return false,"no_method"
+end
+
+-----------------------------
+-- 5) Telemetrie sammeln
+-----------------------------
+local function pct(a,b) if not b or b<=0 then return 0 end return (a or 0)/b*100 end
 
 local function collect_telem()
-  local reactors,turbines={},{}
-  for _,n in ipairs(DEV.reactors) do local r=read_reactor(n); if r then table.insert(reactors,r) end end
-  for _,n in ipairs(DEV.turbines) do local t=read_turbine(n); if t then table.insert(turbines,t) end end
-  local agg={reactors={count=#reactors,active=0,hot=0,energy=0,fuel=0,fuel_max=0}, turbines={count=#turbines,active=0,rpm=0,flow=0,flow_max=0,prod=0}}
-  for _,r in ipairs(reactors) do
-    if r.active then agg.reactors.active=agg.reactors.active+1 end
-    agg.reactors.hot=agg.reactors.hot+(r.hot or 0)
-    agg.reactors.energy=agg.reactors.energy+(r.energy or 0)
-    agg.reactors.fuel=agg.reactors.fuel+(r.fuel or 0)
-    agg.reactors.fuel_max=agg.reactors.fuel_max+(r.fuel_max or 0)
+  local telem={ reactors={}, turbines={}, agg={reactors={}, turbines={}} }
+  for i,p in ipairs(REACTORS) do
+    local r = reactor_telemetry(p); r.uid=("rx_%d"):format(i); table.insert(telem.reactors, r)
+    telem.agg.reactors.fuel      =(telem.agg.reactors.fuel or 0)+(r.fuel or 0)
+    telem.agg.reactors.fuel_max  =(telem.agg.reactors.fuel_max or 0)+(r.fuel_max or 0)
+    telem.agg.reactors.waste     =(telem.agg.reactors.waste or 0)+(r.waste or 0)
+    telem.agg.reactors.waste_max =(telem.agg.reactors.waste_max or 0)+(r.waste_max or 0)
+    telem.agg.reactors.count     =(telem.agg.reactors.count or 0)+1
+    telem.agg.reactors.active    =(telem.agg.reactors.active or 0)+((r.active and 1) or 0)
   end
-  for _,t in ipairs(turbines) do
-    if t.active then agg.turbines.active=agg.turbines.active+1 end
-    agg.turbines.prod=agg.turbines.prod+(t.prod or 0)
-    agg.turbines.rpm=agg.turbines.rpm+(t.rpm or 0)
-    agg.turbines.flow=agg.turbines.flow+(t.flow or 0)
-    agg.turbines.flow_max=agg.turbines.flow_max+(t.flow_max or 0)
+  for i,p in ipairs(TURBINES) do
+    local rpm = turbine_getRPM(p)
+    telem.turbines[i] = { uid=("tb_%d"):format(i), rpm=rpm }
+    telem.agg.turbines.rpm   =(telem.agg.turbines.rpm or 0)+rpm
+    telem.agg.turbines.count =(telem.agg.turbines.count or 0)+1
+    telem.agg.turbines.active=(telem.agg.turbines.active or 0)+((rpm>10) and 1 or 0)
   end
-  return reactors,turbines,agg
+  return telem
 end
 
--- ---------- HELLO / TELEM ----------
-local MASTER_ID, last_ack = nil, 0
-local function hello()
-  rednet.broadcast({type="HELLO", caps={reactor=true,turbine=true}, _auth=CFG.auth_token})
-end
-local function expect_ack(timeout)
-  local id,msg = rednet.receive(timeout or 2)
-  if id and type(msg)=="table" and msg.type=="HELLO_ACK" and msg._auth==CFG.auth_token then
-    MASTER_ID = id; last_ack = os.epoch("utc"); return true
-  end
-  return false
-end
-local function send_telem()
-  if not MASTER_ID then return end
-  local reactors,turbines,agg = collect_telem()
-  rednet.send(MASTER_ID, {type="TELEM", telem={reactors=reactors,turbines=turbines,agg=agg}, _auth=CFG.auth_token})
-end
-
--- ---------- CMD Handling ----------
-local function cmd_ack(to, ok, msg, extra)
-  local payload = {type="CMD_ACK", ok=ok, msg=msg, _auth=CFG.auth_token}
-  if extra then for k,v in pairs(extra) do payload[k]=v end end
-  if to then rednet.send(to, payload) else rednet.broadcast(payload) end
-end
-
-local function autotune_turbine(name, target_rpm, timeout_s)
-  target_rpm = target_rpm or 1800
-  timeout_s  = timeout_s or 25
-  local p = peripheral.wrap(name); if not p then return false, "not found" end
-  local cur = pcallm(p,"getFluidFlowRateMax") or 1000
-  local best, best_err = cur, math.huge
-  local step = 400
-  local t0 = os.clock()
-  while os.clock() - t0 < timeout_s do
-    pcallm(p,"setFluidFlowRateMax", math.max(0, math.floor(cur)))
-    os.sleep(1.2)
-    local rpm = pcallm(p,"getRotorSpeed") or 0
-    local err = math.abs((target_rpm) - rpm)
-    if err < best_err then best_err, best = err, cur end
-    if err <= 15 then break end
-    if rpm < target_rpm then cur = cur + step else cur = math.max(0, cur - step) end
-    step = math.max(25, math.floor(step*0.55))
-  end
-  pcallm(p,"setFluidFlowRateMax", math.max(0, math.floor(best)))
-  return true, ("flow_max="..math.floor(best).." err="..math.floor(best_err))
-end
-
-local function handle_cmd(id, msg)
-  if msg._auth ~= CFG.auth_token then return end
-  local target, name, cmd, value = msg.target, msg.name, msg.cmd, msg.value
-  if target=="reactor" then
-    -- Wenn name nil: alle Reaktoren
-    local list = (name and {name}) or DEV.reactors
-    for _,n in ipairs(list) do
-      local p=peripheral.wrap(n); if p then pcallm(p,cmd,value) end
-    end
-    cmd_ack(id,true,"reactor "..(cmd or "?"))
-  elseif target=="turbine" then
-    if cmd=="autotune" then
-      local ok,info = autotune_turbine(name or DEV.turbines[1], tonumber(msg.target_rpm) or 1800, tonumber(msg.timeout_s) or 25)
-      cmd_ack(id, ok, info or "")
+-----------------------------
+-- 6) Master-CMDs verarbeiten
+-----------------------------
+local function handle_cmd(msg, from_id)
+  last_master_cmd_ts = now_s()
+  if msg.target=="reactor" then
+    if msg.cmd=="setActive" then
+      local ok_any=false
+      for _,p in ipairs(REACTORS) do local ok=select(1,reactor_setActive(p, msg.value and true or false)); ok_any=ok_any or ok end
+      rednet.send(from_id, {type="CMD_ACK", ok=ok_any, msg="reactor setActive", _auth=CFG.auth_token})
+      return
+    elseif msg.cmd=="WASTE_DRAIN" then
+      local amount = tonumber(msg.amount or CFG.auto.waste_batch_amount or 0)
+      local ok_any=false; local used="none"
+      for _,p in ipairs(REACTORS) do local ok,m=reactor_waste_drain(p, amount); ok_any=ok_any or ok; used=m or used end
+      rednet.send(from_id, {type="CMD_ACK", ok=ok_any, msg="waste_drain:"..tostring(used), _auth=CFG.auth_token})
       return
     end
-    local list = (name and {name}) or DEV.turbines
-    for _,n in ipairs(list) do
-      local p=peripheral.wrap(n); if p then pcallm(p,cmd,value) end
+  elseif msg.target=="turbine" then
+    if msg.cmd=="setInductorEngaged" then
+      local ok_any=false
+      for _,t in ipairs(TURBINES) do local ok=select(1,turbine_setInductor(t, msg.value and true or false)); ok_any=ok_any or ok end
+      rednet.send(from_id, {type="CMD_ACK", ok=ok_any, msg="turbine inductor", _auth=CFG.auth_token})
+      return
+    elseif msg.cmd=="autotune" then
+      -- Platzhalter: einfach Inductor einschalten, falls RPM > min
+      local ok_any=false
+      for _,t in ipairs(TURBINES) do
+        local rpm=turbine_getRPM(t)
+        if rpm > (CFG.auto.inductor_on_min_rpm or 500) then local ok=select(1,turbine_setInductor(t,true)); ok_any=ok_any or ok end
+      end
+      rednet.send(from_id, {type="CMD_ACK", ok=ok_any, msg="autotune(simple)", _auth=CFG.auth_token})
+      return
     end
-    cmd_ack(id,true,"turbine "..(cmd or "?"))
   end
+  -- Unbekannt
+  rednet.send(from_id, {type="CMD_ACK", ok=false, msg="unknown_cmd", _auth=CFG.auth_token})
 end
 
--- ---------- GUI ----------
-local ok_gui, GUI = pcall(require,"xreactor.shared.gui")
-if not ok_gui then GUI = dofile("/xreactor/shared/gui.lua") end
+-----------------------------
+-- 7) Fallback-Autosteuerung
+-----------------------------
+local waste_cooldown = {}  -- key="rx_i" → ts
 
-local screen_node = (function()
-  local s = GUI.mkScreen("node","Node ▢ Übersicht")
-  local kvR = GUI.mkKV(2,3,30,"Reaktoren:", colors.cyan)
-  local kvT = GUI.mkKV(2,4,30,"Turbinen:",  colors.cyan)
-  local kvRPM=GUI.mkKV(2,6,30,"RPM∑:",     colors.lime)
-  local kvSTM=GUI.mkKV(2,7,30,"Steam∑:",   colors.lime)
-  local kvP  =GUI.mkKV(2,8,30,"Power/t:",  colors.lime)
-  local bar  =GUI.mkBar(2,10,30, colors.lime)
-  local btnM =GUI.mkButton(34,3,16,3,"Mon zuweisen", function()
-    term.setBackgroundColor(colors.black); term.setTextColor(colors.white); term.clear()
-    print("Monitor-Name eingeben (z.B. monitor_0). Leer = entfernen.")
-    write("> "); local m = read()
-    if m=="" then CFG.monitor_view=nil else CFG.monitor_view=m end
-    save_json(UI_PATH, {monitor_view=CFG.monitor_view})
-    print("Gespeichert. ENTER…"); read()
-  end, colors.cyan)
-  s:add(kvR); s:add(kvT); s:add(kvRPM); s:add(kvSTM); s:add(kvP); s:add(bar); s:add(btnM)
-  s.onShow = function()
-    local _,_,A = collect_telem()
-    kvR.props.value = string.format("%d/%d act", A.reactors.active or 0, A.reactors.count or 0)
-    kvT.props.value = string.format("%d/%d act", A.turbines.active or 0, A.turbines.count or 0)
-    kvRPM.props.value = math.floor(A.turbines.rpm or 0)
-    kvSTM.props.value = math.floor(A.turbines.flow or 0).." mB/t"
-    kvP.props.value   = math.floor(A.turbines.prod or 0).." RF/t"
-    bar.props.value   = math.min(1, (A.turbines.prod or 0)/200000) -- Demo-Skala
+local function auto_loop_tick()
+  if not (CFG.auto and CFG.auto.enable) then return end
+  if not master_is_quiet() then return end
+
+  -- a) Reaktor anlassen (optional)
+  if CFG.auto.reactor_keep_on then
+    for _,p in ipairs(REACTORS) do pcall(reactor_setActive, p, true) end
   end
-  return s
-end)()
 
-local router = (function()
-  local r = GUI.mkRouter({monitorName=CFG.monitor_view, textScale=0.5})
-  r:register(screen_node)
-  r:show("node")
-  return r
-end)()
+  -- b) Turbinen RPM halten (rudimentär)
+  for _,t in ipairs(TURBINES) do
+    local rpm = turbine_getRPM(t)
+    local tgt = CFG.auto.rpm_target or 1800
+    local band= CFG.auto.rpm_band   or 100
+    local step= CFG.auto.flow_step  or 25
 
-if not router.monSurf then
-  -- Kein Monitor zugewiesen: zeige im Terminal
-  router = GUI.mkRouter({})
-  router:register(screen_node)
-  router:show("node")
-end
+    -- Inductor bei genug RPM an
+    if rpm > (CFG.auto.inductor_on_min_rpm or 500) then pcall(turbine_setInductor, t, true) end
 
--- ---------- Loops ----------
-local function rx_loop()
-  while true do
-    local id,msg = rednet.receive(1)
-    if id and type(msg)=="table" and msg._auth==CFG.auth_token then
-      if msg.type=="HELLO_ACK" then
-        MASTER_ID=id; last_ack=os.epoch("utc")
-      elseif msg.type=="CMD" then
-        handle_cmd(id,msg)
+    -- Wenn API Flow-Rate kann: grob justieren
+    if t.getFlowRate and t.setFlowRate then
+      local cur = t.getFlowRate()
+      if rpm < (tgt - band) then pcall(turbine_setFlow, t, (cur or 0) + step)
+      elseif rpm > (tgt + band) then pcall(turbine_setFlow, t, math.max(0, (cur or 0) - step)) end
+    end
+  end
+
+  -- c) Auto-WASTE-DRAIN
+  local waste_max = CFG.auto.waste_max_pct or 60
+  local amount    = CFG.auto.waste_batch_amount or 4000
+  local cd        = CFG.auto.waste_cooldown_s or 90
+  for i,p in ipairs(REACTORS) do
+    local r = reactor_telemetry(p)
+    local uid = ("rx_%d"):format(i)
+    local last = waste_cooldown[uid] or 0
+    if r.waste_max and r.waste_max > 0 then
+      local w_pct = pct(r.waste, r.waste_max)
+      if w_pct >= waste_max and (now_s() - last) >= cd then
+        pcall(reactor_waste_drain, p, amount)
+        waste_cooldown[uid] = now_s()
       end
     end
   end
 end
 
-local function core_loop()
-  hello(); expect_ack(2)
-  local t_hello=0; local t_telem=0
+-----------------------------
+-- 8) RX/TX Loops
+-----------------------------
+local function rx_loop()
+  -- HELLO initial
+  rednet.broadcast({type="HELLO", caps={reactor=(#REACTORS>0), turbine=(#TURBINES>0)}, _auth=CFG.auth_token})
   while true do
-    if os.clock()-t_hello >= CFG.hello_interval then hello(); expect_ack(2); t_hello=os.clock() end
-    if os.clock()-t_telem >= CFG.telem_interval then send_telem(); t_telem=os.clock() end
+    local id,msg = rednet.receive(0.5)
+    if id and type(msg)=="table" and msg._auth==CFG.auth_token then
+      if msg.type=="CMD" then
+        handle_cmd(msg, id)
+      elseif msg.type=="HELLO_ACK" then
+        last_master_cmd_ts = now_s() -- lebenszeichen
+      end
+    end
+  end
+end
+
+local function tx_loop()
+  local t0 = 0
+  while true do
+    local now=os.clock()
+    if now - t0 >= (CFG.tick_rate_s or 1.0) then
+      local telem = collect_telem()
+      rednet.broadcast({type="TELEM", telem=telem, _auth=CFG.auth_token})
+      t0 = now
+    end
+    -- Fallback-Auto
+    pcall(auto_loop_tick)
     os.sleep(0.05)
   end
 end
 
-local function ui_loop()
-  local t0=0
-  while true do
-    if os.clock()-t0 >= 0.25 then
-      router:draw()
-      t0=os.clock()
-    end
-    local e = {os.pullEventTimeout(0.05)}
-    if e[1]=="monitor_touch" then
-      local side,x,y=e[2],e[3],e[4]
-      if router and router.monSurf and peripheral.getName(router.monSurf.t)==side then
-        router:handleTouch(e[1], side, x, y)
-      end
-    elseif e[1]=="mouse_click" then
-      router:handleTouch("mouse_click", e[2], e[3], e[4])
-    end
-  end
-end
-
-print(("Node gestartet | Modem:%s  Wired:%s  Monitor:%s")
-  :format(CFG.modem_side, CFG.wired_side or "-", CFG.monitor_view or "-"))
-
-parallel.waitForAny(rx_loop, core_loop, ui_loop)
+print(("Node #%d gestartet | Modem:%s | Auto:%s")
+  :format(NODE_ID, CFG.modem_side, (CFG.auto.enable and "ON" or "OFF")))
+parallel.waitForAny(rx_loop, tx_loop)
