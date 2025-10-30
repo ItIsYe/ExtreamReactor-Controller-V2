@@ -5,48 +5,51 @@
 
 return {
   -- Hardware & Kommunikation
-  modem_side      = "right",     -- Wireless-Modem (Rednet)
-  auth_token      = "xreactor",  -- muss mit Node-Config übereinstimmen
-  telem_timeout_s = 15,          -- Sekunden bis Node als „offline“ gilt
+  modem_side      = "right",
+  auth_token      = "xreactor",
+  telem_timeout_s = 15,
 
   -- Anzeige & GUI
-  redraw_interval = 0.25,        -- GUI-Refresh-Intervall
+  redraw_interval = 0.25,
   views = {
-    dashboard = nil,             -- z. B. "monitor_0"
-    control   = nil,             -- z. B. "monitor_1"
-    config    = nil,             -- z. B. "monitor_2"
+    dashboard = nil,
+    control   = nil,
+    config    = nil,
   },
 
-  -- Monitore über Wired-Modem (für remote angeschlossene Monitore)
-  monitor_wired_side = nil,      -- z. B. "left" oder nil
+  -- Monitore über Wired-Modem
+  monitor_wired_side = nil,
 
   -- Mekanism Induction Matrix (optional)
-  matrix = {
-    enable     = true,
-    name       = nil,            -- fester Peripheral-Name (oder nil = auto-find)
-    wired_side = nil,            -- z. B. "left" falls über Wired-Modem erreichbar
-  },
+  matrix = { enable=true, name=nil, wired_side=nil },
 
   -- Logging
   log_enabled = true,
   log_level   = "info",
 
-  -- AutoScale-Defaults (pro View; kann in /xreactor/ui_master.json überschrieben werden)
+  -- AutoScale-Defaults
   default_view_scale = {
     dashboard = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
     control   = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
     config    = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
   },
 
-  --======================================================
-  -- PHASE 1 • FUEL-MANAGEMENT (ohne ME-Anbindung)
-  --======================================================
+  -- Phase 1 • Fuel-Management
   fuel = {
-    enable       = true,   -- Master überwacht Fuel-Level & sendet FUEL_REQ
-    min_pct      = 20,     -- unter diesem % wird nachgefordert
-    target_pct   = 60,     -- Zielwert; Bedarf = Differenz bis target
-    request_unit = 4,      -- in Ingots pro Anfrage (Abrundung auf Einheit)
-    cooldown_s   = 90,     -- Cooldown pro Reaktor, um Spam zu vermeiden
-    supplier_tag = "any",  -- optional: Supplier-Gruppe/Tag (frei für Phase 2)
+    enable       = true,
+    min_pct      = 20,
+    target_pct   = 60,
+    request_unit = 4,
+    cooldown_s   = 90,
+    supplier_tag = "any",
+  },
+
+  -- Phase 2 • Waste-Management (Drain über Reaktor-Nodes)
+  waste = {
+    enable        = true,   -- aktiviert Master-Seite (Drain-Commands an Nodes)
+    max_pct       = 40,     -- ab diesem Waste-% wird drain angewiesen
+    cooldown_s    = 120,    -- Cooldown pro Reaktor/Node für Drain-Befehle
+    batch_amount  = 4000,   -- gewünschte Menge pro Drain-Vorgang (mB, falls unterstützt)
+    tag_receiver  = "any",  -- nur Info/Markierung (Fuel/Waste-Node arbeitet autonom)
   },
 }
