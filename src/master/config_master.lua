@@ -19,7 +19,7 @@ return {
 
   -- Monitore über Wired-Modem (für remote angeschlossene Monitore)
   -- Setze hier die Seite deines WIRED-Modems (z. B. "left"), wenn deine Monitore
-  -- per Kabel am Netzwerk hängen. Bei nil werden nur lokale Monitore gelistet.
+  -- per Kabel im Netz hängen. Bei nil werden nur lokale Monitore gelistet.
   monitor_wired_side = nil,
 
   -- Mekanism Induction Matrix (optional)
@@ -32,4 +32,12 @@ return {
   -- Logging
   log_enabled = true,
   log_level   = "info",
+
+  -- Standard-Vorgaben für AutoScale (werden in /xreactor/ui_master.json pro View gespeichert)
+  -- desired_cols: Zielspaltenbreite; correction: +/-0.5 Schritte; manual: Fixskala wenn autoscale=false
+  default_view_scale = {
+    dashboard = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
+    control   = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
+    config    = { autoscale=true, desired_cols=60, correction=0.0, manual=1.0 },
+  },
 }
