@@ -1,0 +1,1 @@
+-- topbar.lua (Health Check)
