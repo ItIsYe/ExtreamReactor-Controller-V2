@@ -1,6 +1,4 @@
--- installer.lua  (XReactor Hybrid-Installer: Basis+AUX immer, MASTER bei Monitor automatisch)
--- Repoquelle: https://github.com/ItIsYe/ExtreamReactor-Controller-V2
-
+-- installer.lua  (XReactor Hybrid-Installer • inkl. topbar.lua + GUI mkRouter-Fallback + Auto-Health-Check)
 local REPO_BASE = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main"
 
 -- ===== Utils =====
@@ -17,13 +15,9 @@ local function save_text(path,text) ensureDir(path) if #text>getFree()-2048 then
 local function save_url(url,path) local body,err=http_get(url) if not body then return false,err end return save_text(path,body) end
 local function say(...) print(table.concat({...}," ")) end
 local function ask(prompt,def) write(prompt..(def and (" ["..def.."]") or "")..": ") local a=read() if a=="" and def then a=def end return a end
+local function monitor_present() local ok,mon=pcall(function() return peripheral.find("monitor") end) return ok and (mon~=nil) end
 
-local function monitor_present()
-  local ok, mon = pcall(function() return peripheral.find("monitor") end)
-  return ok and (mon ~= nil)
-end
-
--- ===== Rolle wählen =====
+-- ===== Rolle =====
 local function choose_role()
   say("") say("[1] MASTER (UI)   [2] AUX (Worker/Textmodus)")
   local sel=ask("Auswahl 1/2","2")
@@ -32,11 +26,12 @@ local function choose_role()
 end
 
 -- ===== Manifeste =====
--- Basis inkl. AUX-Node (für sicheren Fallback)
+-- Basis inkl. AUX-Node (für sicheren Fallback)  +++  topbar.lua NEU dabei +++
 local BASE = {
   {"src/shared/protocol.lua","/xreactor/shared/protocol.lua"},
   {"src/shared/identity.lua","/xreactor/shared/identity.lua"},
   {"src/shared/log.lua",     "/xreactor/shared/log.lua"},
+  {"src/shared/topbar.lua",  "/xreactor/shared/topbar.lua"},   -- <<<
   {"src/node/aux_node.lua",  "/xreactor/node/aux_node.lua"},
   {"startup.lua",            "/startup.lua"},
 }
@@ -56,7 +51,6 @@ local function ensure_dirs()
     if not fs.exists(d) then fs.makeDir(d) end
   end
 end
-
 local function download_set(set)
   for i,p in ipairs(set) do
     local src,dst=p[1],p[2]; local url=REPO_BASE.."/"..src
@@ -65,7 +59,6 @@ local function download_set(set)
     if not ok then error(("Fehler bei %s: %s"):format(dst,tostring(err))) end
   end
 end
-
 local function write_config_identity(role)
   local path="/xreactor/config_identity.lua"
   if fs.exists(path) then say("Config existiert bereits:",path) return end
@@ -78,7 +71,6 @@ local function write_config_identity(role)
 }]])
   save_text(path,string.format(tpl,role)); say("Config geschrieben:",path)
 end
-
 local function write_config_master()
   local path="/xreactor/config_master.lua"
   if fs.exists(path) then return end
@@ -88,50 +80,79 @@ local function write_config_master()
   text_scale   = 0.5,
 }]])
 end
-
 local function write_launchers()
   save_text("/xreactor/master",'shell.run("/xreactor/master/master_home.lua")')
   save_text("/xreactor/node",  'shell.run("/xreactor/node/aux_node.lua")')
   say("Launcher angelegt/aktualisiert: /xreactor/master und /xreactor/node")
 end
-
 local function write_role_txt(role_lower)
   save_text("/xreactor/role.txt",role_lower.."\n"); say("role.txt gesetzt:",role_lower)
 end
 
+-- ===== GUI-Fallback (mkRouter) =====
+local function ensure_gui_mkrouter()
+  local ok,gui=pcall(function() return dofile("/xreactor/shared/gui.lua") end)
+  local has = ok and type(gui)=="table" and type(gui.mkRouter)=="function"
+  if has then return end
+  local shim=[[
+-- /xreactor/shared/gui.lua  (mkRouter-Shim)
+local M={}
+local function resolveMonitor(name)
+  local dev
+  if type(name)=="string" and name~="" then pcall(function() dev=peripheral.wrap(name) end) end
+  if not dev then dev=peripheral.find("monitor") end
+  if not dev then dev=term.current() end
+  return dev
+end
+function M.mkRouter(opts)
+  opts=opts or {}
+  local dev=resolveMonitor(opts.monitorName or opts.monitor_side)
+  local r={dev=dev}
+  function r:setTextScale(s) if self.dev.setTextScale then pcall(self.dev.setTextScale,s or 0.5) end end
+  function r:getSize() if self.dev.getSize then return self.dev.getSize() end return term.getSize() end
+  function r:clear() if self.dev.clear then self.dev.clear() else term.clear() end if self.dev.setCursorPos then self.dev.setCursorPos(1,1) else term.setCursorPos(1,1) end end
+  function r:setCursorPos(x,y) if self.dev.setCursorPos then self.dev.setCursorPos(x,y) else term.setCursorPos(x,y) end end
+  function r:write(t) t=tostring(t or "") if self.dev.write then self.dev.write(t) else term.write(t) end end
+  function r:printAt(x,y,t) self:setCursorPos(x,y) self:write(t) end
+  function r:center(y,t) local w=select(1,self:getSize()) local s=tostring(t or "") local x=math.max(1,math.floor((w-#s)/2)+1) self:printAt(x,y,s) end
+  return r
+end
+local _d=M.mkRouter({})
+function M.init() end
+function M.clear() _d:clear() end
+function M.writeAt(x,y,t) _d:printAt(x,y,t) end
+function M.center(y,t) _d:center(y,t) end
+function M.bar(x,y,w,f) w=math.max(3,w or 10) f=math.max(0,math.min(1,f or 0)) _d:setCursorPos(x,y) _d:write("[") local filled=math.floor((w-2)*f) for i=1,w-2 do if i<=filled then _d:write("#") else _d:write(" ") end end _d:write("]") end
+function M.button(x,y,label) local txt="["..tostring(label or "").."]" _d:printAt(x,y,txt) return {x=x,y=y,w=#txt,h=1,label=label} end
+function M.loop(step,tick) tick=tick or 0.2 while true do if type(step)=="function" then local ok,err=pcall(step) if not ok then pcall(function() local log=require("xreactor.shared.log") if log and log.error then log.error("GUI loop error: "..tostring(err)) end end) end end sleep(tick) end end
+return M
+]]
+  save_text("/xreactor/shared/gui.lua",shim)
+  say("GUI mkRouter-Shim geschrieben: /xreactor/shared/gui.lua")
+end
+
+-- ===== Health-Check =====
 local function write_health_check()
   local hc=[[
 -- /xreactor/health_check.lua
 local function ok(b) return b and "OK" or "FAIL" end
 local function exists(p) return fs.exists(p) and not fs.isDir(p) end
 print("== XReactor Health-Check ==")
--- role
-local role="unknown"
-if fs.exists("/xreactor/role.txt") then local f=fs.open("/xreactor/role.txt","r") role=(f.readLine() or "unknown") f.close() end
+local role="unknown" if fs.exists("/xreactor/role.txt") then local f=fs.open("/xreactor/role.txt","r") role=(f.readLine() or "unknown") f.close() end
 print("role.txt:",role)
--- AUX presence
 local aux="/xreactor/node/aux_node.lua"
 print("AUX-Datei vorhanden:", ok(exists(aux)))
-if exists(aux) then local lf=loadfile(aux) print("AUX-Datei ladbar:", ok(type(lf)=="function")) else print("  -> fehlt: wget https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/aux_node.lua /xreactor/node/aux_node.lua") end
--- MASTER presence
+if exists(aux) then local lf=loadfile(aux) print("AUX-Datei ladbar:", ok(type(lf)=="function")) end
 local mh="/xreactor/master/master_home.lua"
 print("MASTER-Hauptskript:", ok(exists(mh)))
 local gui="/xreactor/shared/gui.lua"
 print("GUI vorhanden:", ok(exists(gui)))
--- Modems
+local top="/xreactor/shared/topbar.lua"
+print("TOPBAR vorhanden:", ok(exists(top)))
 local hasModem=false
-for _,n in ipairs(peripheral.getNames()) do
-  if peripheral.getType(n)=="modem" then
-    hasModem=true
-    local st=rednet.isOpen(n) and "offen" or "geschlossen"
-    print("Modem "..n..": "..st)
-  end
-end
+for _,n in ipairs(peripheral.getNames()) do if peripheral.getType(n)=="modem" then hasModem=true print("Modem "..n..": "..(rednet.isOpen(n) and "offen" or "geschlossen")) end end
 print("Mind. ein Modem:", ok(hasModem))
-if not hasModem then print("  -> Modem anschließen & einschalten (Rechtsklick)") end
--- Monitor
-local mon=peripheral.find("monitor")
-print("Monitor gefunden:", ok(mon~=nil))
+local mon=peripheral.find("monitor"); print("Monitor gefunden:", ok(mon~=nil))
 print("== Ende. Wenn alles OK: reboot ==")
 ]]
   save_text("/xreactor/health_check.lua",hc)
@@ -141,16 +162,12 @@ end
 local function run()
   ensure_dirs()
   local role, role_lower = choose_role()
-  local auto_master = monitor_present()  -- Hybrid: wenn Monitor dran, MASTER-UI dazu holen
+  local auto_master = monitor_present()
   say("Gewählte Rolle:", role, " | Monitor erkannt:", tostring(auto_master))
   say("Freier Speicher:", fmtBytes(getFree())); say("")
 
-  -- Basis + AUX immer
-  local plan={} for _,p in ipairs(BASE) do plan[#plan+1]=p end
-  -- MASTER-UI laden, wenn Rolle MASTER **oder** Monitor erkannt wurde
-  if role=="MASTER" or auto_master then
-    for _,p in ipairs(MASTER) do plan[#plan+1]=p end
-  end
+  local plan={} for _,p in ipairs(BASE)   do plan[#plan+1]=p end
+  if role=="MASTER" or auto_master then for _,p in ipairs(MASTER) do plan[#plan+1]=p end end
 
   local ok,err=pcall(download_set, plan)
   if not ok then
@@ -164,11 +181,15 @@ local function run()
   if role=="MASTER" or auto_master then write_config_master() end
 
   -- Start-Dateien & Rolle
-  write_launchers()
-  write_role_txt(role_lower)
+  save_text("/xreactor/master",'shell.run("/xreactor/master/master_home.lua")')
+  save_text("/xreactor/node",  'shell.run("/xreactor/node/aux_node.lua")')
+  say("Launcher angelegt/aktualisiert: /xreactor/master und /xreactor/node")
+  save_text("/xreactor/role.txt",role_lower.."\n"); say("role.txt gesetzt:",role_lower)
 
-  -- Health-Check Datei anlegen & starten
+  -- GUI-Kompatibilität absichern + Health-Check
+  ensure_gui_mkrouter()
   write_health_check()
+
   say(""); say("✅ Installation fertig. Starte Health-Check …")
   local ok2,err2=pcall(function() dofile("/xreactor/health_check.lua") end)
   if not ok2 then printError("Health-Check Fehler: "..tostring(err2)) end
