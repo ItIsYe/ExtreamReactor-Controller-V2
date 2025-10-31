@@ -1,93 +1,125 @@
 -- /xreactor/shared/gui.lua
--- Minimaler GUI-Shim: bietet ein paar häufig genutzte Calls, fällt auf term zurück, wenn kein Monitor existiert.
+-- Kompatibler GUI-Shim für MASTER-UI
+-- Stellt GUI.mkRouter(...) bereit und bietet einfache Zeichen-Helfer.
+
 local M = {}
 
-local monitor, termBlit = nil, term.current()
-local cfg = nil
-
-local function findMonitor(side)
-  if side and peripheral.getType(side) == "monitor" then return peripheral.wrap(side) end
-  return peripheral.find("monitor")
-end
-
-local function setTextScale(mon, scale)
-  if mon and mon.setTextScale then
-    local ok = pcall(function() mon.setTextScale(scale or 0.5) end)
-    if not ok then pcall(function() mon.setTextScale(0.5) end) end
+-- Monitor (oder Terminal) auswählen
+local function resolveMonitor(name)
+  local dev
+  if type(name) == "string" and name ~= "" then
+    pcall(function() dev = peripheral.wrap(name) end)
   end
-end
-
-function M.init()
-  local ok, cm = pcall(function() return require("xreactor.config_master") end)
-  cfg = ok and type(cm)=="table" and cm or { text_scale = 0.5 }
-  monitor = findMonitor(cfg.monitor_side)
-  if monitor then
-    setTextScale(monitor, cfg.text_scale or 0.5)
-    monitor.setBackgroundColor(colors.black)
-    monitor.setTextColor(colors.white)
-    monitor.clear()
-  else
-    term.setBackgroundColor(colors.black)
-    term.setTextColor(colors.white)
-    term.clear()
+  if not dev then
+    dev = peripheral.find("monitor")
   end
+  if not dev then
+    dev = term.current()
+  end
+  return dev
 end
 
-local function w() return monitor or termBlit end
+-- Router-Objekt mit Monitor/Terminal-API
+function M.mkRouter(opts)
+  opts = opts or {}
+  local dev = resolveMonitor(opts.monitorName or opts.monitor_side)
+
+  local router = { dev = dev }
+
+  function router:setTextScale(s)
+    if self.dev.setTextScale then pcall(self.dev.setTextScale, s or 0.5) end
+  end
+
+  function router:getSize()
+    if self.dev.getSize then return self.dev.getSize() end
+    return term.getSize()
+  end
+
+  function router:clear()
+    if self.dev.clear then self.dev.clear() else term.clear() end
+    if self.dev.setCursorPos then self.dev.setCursorPos(1,1) else term.setCursorPos(1,1) end
+  end
+
+  function router:setCursorPos(x,y)
+    if self.dev.setCursorPos then self.dev.setCursorPos(x,y) else term.setCursorPos(x,y) end
+  end
+
+  function router:write(txt)
+    txt = tostring(txt or "")
+    if self.dev.write then self.dev.write(txt) else term.write(txt) end
+  end
+
+  function router:blit(a,b,c)
+    if self.dev.blit then self.dev.blit(a,b,c) else self:write(a) end
+  end
+
+  function router:setTextColor(c)
+    if self.dev.setTextColor then self.dev.setTextColor(c) end
+  end
+
+  function router:setBackgroundColor(c)
+    if self.dev.setBackgroundColor then self.dev.setBackgroundColor(c) end
+  end
+
+  function router:printAt(x,y,txt)
+    self:setCursorPos(x,y)
+    self:write(txt)
+  end
+
+  function router:center(y,txt)
+    local w = select(1, self:getSize())
+    local s = tostring(txt or "")
+    local x = math.max(1, math.floor((w - #s)/2) + 1)
+    self:printAt(x,y,s)
+  end
+
+  return router
+end
+
+-- ===== Kompatibilitäts-Helfer auf einem Default-Router =====
+local _default = M.mkRouter({})
+
+function M.init() end
 
 function M.clear()
-  w().setBackgroundColor(colors.black)
-  w().setTextColor(colors.white)
-  w().clear()
-  w().setCursorPos(1,1)
+  _default:clear()
 end
 
-function M.writeAt(x, y, text)
-  local dev = w()
-  dev.setCursorPos(math.floor(x), math.floor(y))
-  dev.write(tostring(text))
+function M.writeAt(x,y,text)
+  _default:printAt(x,y,text)
 end
 
-function M.center(y, text)
-  local dev = w()
-  local W = dev.getSize and select(1, dev.getSize()) or term.getSize()
-  local tx = tostring(text)
-  local x = math.max(1, math.floor((W - #tx)/2)+1)
-  dev.setCursorPos(x, y)
-  dev.write(tx)
+function M.center(y,text)
+  _default:center(y,text)
 end
 
-function M.bar(x, y, width, fill)
+function M.bar(x,y,width,fill)
   width = math.max(3, width or 10)
   fill  = math.max(0, math.min(1, fill or 0))
-  local dev = w()
-  dev.setCursorPos(x, y); dev.write("[")
+  _default:setCursorPos(x,y); _default:write("[")
+  local filled = math.floor((width-2)*fill)
   for i=1,width-2 do
-    if i <= math.floor((width-2)*fill) then dev.write("#") else dev.write(" ") end
+    if i <= filled then _default:write("#") else _default:write(" ") end
   end
-  dev.write("]")
+  _default:write("]")
 end
 
-function M.button(x, y, label)
-  local dev = w()
-  local txt = "["..tostring(label).."]"
-  dev.setCursorPos(x, y); dev.write(txt)
-  -- Dummy-Rückgabe: Bounding Box, falls dein Code damit rechnet
-  return {x=x, y=y, w=#txt, h=1, label=label}
+function M.button(x,y,label)
+  local txt = "["..tostring(label or "").."]"
+  _default:printAt(x,y,txt)
+  return {x=x,y=y,w=#txt,h=1,label=label}
 end
 
--- Einfache Event-Loop (non-blocking Callback)
-function M.loop(stepFn, tick)
+function M.loop(stepFn,tick)
   tick = tick or 0.2
   while true do
     if type(stepFn) == "function" then
       local ok, err = pcall(stepFn)
       if not ok then
-        -- nicht crashen; minimal loggen (falls verfügbar)
-        local logOk, log = pcall(function() return require("xreactor.shared.log") end)
-        if logOk and log and type(log.error)=="function" then
-          pcall(log.error, "GUI loop error: "..tostring(err))
-        end
+        pcall(function()
+          local log = require("xreactor.shared.log")
+          if log and log.error then log.error("GUI loop error: "..tostring(err)) end
+        end)
       end
     end
     sleep(tick)
