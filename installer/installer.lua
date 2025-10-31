@@ -1,7 +1,7 @@
--- installer.lua  (XReactor Installer • mit Health-Check)
+-- installer.lua  (XReactor Installer • mit Auto-Health-Check & Launchern)
 local REPO_BASE = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main"
 
--- ==== Utils ====
+-- ===== Utils =====
 local function ensureDir(path)
   local parts={} for p in path:gmatch("[^/]+") do parts[#parts+1]=p end
   if #parts<=1 then return end
@@ -16,7 +16,7 @@ local function save_url(url,path) local body,err=http_get(url) if not body then 
 local function say(...) print(table.concat({...}," ")) end
 local function ask(prompt,def) write(prompt..(def and (" ["..def.."]") or "")..": ") local a=read() if a=="" and def then a=def end return a end
 
--- ==== Rolle wählen ====
+-- ===== Rolle =====
 local function choose_role()
   say("") say("[1] MASTER (UI)   [2] AUX (Worker)")
   local sel=ask("Auswahl 1/2","2")
@@ -24,24 +24,26 @@ local function choose_role()
   return "AUX","node"
 end
 
--- ==== Manifeste ====
+-- ===== Manifeste =====
+-- Basis inkl. AUX-Node (für sicheren Fallback)
 local BASE = {
   {"src/shared/protocol.lua","/xreactor/shared/protocol.lua"},
   {"src/shared/identity.lua","/xreactor/shared/identity.lua"},
   {"src/shared/log.lua",     "/xreactor/shared/log.lua"},
-  {"src/node/aux_node.lua",  "/xreactor/node/aux_node.lua"}, -- immer für Fallback
+  {"src/node/aux_node.lua",  "/xreactor/node/aux_node.lua"},
   {"startup.lua",            "/startup.lua"},
 }
+-- Zusatz für MASTER-UI
 local MASTER = {
-  {"xreactor/shared/gui.lua",            "/xreactor/shared/gui.lua"},
-  {"src/master/master_home.lua",         "/xreactor/master/master_home.lua"},
-  {"src/master/fuel_panel.lua",          "/xreactor/master/fuel_panel.lua"},
-  {"src/master/waste_panel.lua",         "/xreactor/master/waste_panel.lua"},
-  {"src/master/alarm_center.lua",        "/xreactor/master/alarm_center.lua"},
-  {"src/master/overview_panel.lua",      "/xreactor/master/overview_panel.lua"},
+  {"xreactor/shared/gui.lua",       "/xreactor/shared/gui.lua"},
+  {"src/master/master_home.lua",    "/xreactor/master/master_home.lua"},
+  {"src/master/fuel_panel.lua",     "/xreactor/master/fuel_panel.lua"},
+  {"src/master/waste_panel.lua",    "/xreactor/master/waste_panel.lua"},
+  {"src/master/alarm_center.lua",   "/xreactor/master/alarm_center.lua"},
+  {"src/master/overview_panel.lua", "/xreactor/master/overview_panel.lua"},
 }
 
--- ==== Dateien schreiben ====
+-- ===== Schreibkram =====
 local function ensure_dirs()
   for _,d in ipairs({"/xreactor","/xreactor/shared","/xreactor/master","/xreactor/node"}) do
     if not fs.exists(d) then fs.makeDir(d) end
@@ -72,54 +74,41 @@ local function write_config_master()
   if fs.exists(path) then return end
   save_text(path,[[return {
   modem_side   = nil,   -- "right" o.ä., nil=auto
-  monitor_side = nil,   -- "top" o.ä.,   nil=auto
+  monitor_side = nil,   -- "top"  o.ä.,  nil=auto
   text_scale   = 0.5,
 }]])
 end
 local function write_launchers()
   save_text("/xreactor/master",'shell.run("/xreactor/master/master_home.lua")')
   save_text("/xreactor/node",  'shell.run("/xreactor/node/aux_node.lua")')
-  say("Launcher angelegt: /xreactor/master und /xreactor/node")
+  say("Launcher angelegt/aktualisiert: /xreactor/master und /xreactor/node")
 end
 local function write_role_txt(role_lower)
   save_text("/xreactor/role.txt",role_lower.."\n"); say("role.txt gesetzt:",role_lower)
 end
 
--- ==== Health-Check schreiben ====
+-- ===== Health-Check =====
 local function write_health_check()
   local hc=[[
 -- /xreactor/health_check.lua
 local function ok(b) return b and "OK" or "FAIL" end
 local function exists(p) return fs.exists(p) and not fs.isDir(p) end
-
 print("== XReactor Health-Check ==")
-
--- Role
+-- role
 local role="unknown"
-if fs.exists("/xreactor/role.txt") then
-  local f=fs.open("/xreactor/role.txt","r"); role=(f.readLine() or "unknown"); f.close()
-end
+if fs.exists("/xreactor/role.txt") then local f=fs.open("/xreactor/role.txt","r") role=(f.readLine() or "unknown") f.close() end
 print("role.txt:",role)
-
--- AUX presence & load
+-- AUX presence
 local aux="/xreactor/node/aux_node.lua"
 print("AUX-Datei vorhanden:", ok(exists(aux)))
-if exists(aux) then
-  local lf=loadfile(aux)
-  print("AUX-Datei ladbar:", ok(type(lf)=="function"))
-  if not lf then print("  -> Tipp: Datei neu laden") end
-else
-  print("  -> fehlt: wget https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/aux_node.lua /xreactor/node/aux_node.lua")
-end
-
--- MASTER presence (falls MASTER)
+if exists(aux) then local lf=loadfile(aux) print("AUX-Datei ladbar:", ok(type(lf)=="function")) else print("  -> fehlt: wget https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/src/node/aux_node.lua /xreactor/node/aux_node.lua") end
+-- MASTER presence
 if role=="master" then
   local mh="/xreactor/master/master_home.lua"
   print("MASTER-Hauptskript:", ok(exists(mh)))
   local gui="/xreactor/shared/gui.lua"
   print("GUI vorhanden:", ok(exists(gui)))
 end
-
 -- Modems
 local hasModem=false
 for _,n in ipairs(peripheral.getNames()) do
@@ -131,42 +120,37 @@ for _,n in ipairs(peripheral.getNames()) do
 end
 print("Mind. ein Modem:", ok(hasModem))
 if not hasModem then print("  -> Modem anschließen & einschalten (Rechtsklick)") end
-
--- Monitor (nur Info)
+-- Monitor
 local mon=peripheral.find("monitor")
 print("Monitor gefunden:", ok(mon~=nil))
-
 print("== Ende. Wenn alles OK: reboot ==")
 ]]
   save_text("/xreactor/health_check.lua",hc)
-  say("Health-Check angelegt: /xreactor/health_check.lua")
 end
 
--- ==== Main ====
+-- ===== Main =====
 local function run()
   ensure_dirs()
   local role,role_lower=choose_role()
   say("Gewählte Rolle:",role); say(""); say("Freier Speicher:",fmtBytes(getFree()))
-
   local plan={} for _,p in ipairs(BASE) do plan[#plan+1]=p end
   if role=="MASTER" then for _,p in ipairs(MASTER) do plan[#plan+1]=p end end
-
   local ok,err=pcall(download_set,plan)
   if not ok then
     say(""); say("❌ Fehler:",tostring(err))
     say("Tipp: Speicher freigeben (z.B. delete /xreactor/log.txt) oder Advanced Computer nutzen.")
     return
   end
-
   write_config_identity(role)
   if role=="MASTER" then write_config_master() end
   write_launchers()
   write_role_txt(role_lower)
   write_health_check()
 
-  say(""); say("✅ Installation fertig.")
-  say("Optional prüfen: dofile('/xreactor/health_check.lua')")
-  say("Danach: reboot")
+  say(""); say("✅ Installation fertig. Starte Health-Check …")
+  local ok2,err2=pcall(function() dofile("/xreactor/health_check.lua") end)
+  if not ok2 then printError("Health-Check Fehler: "..tostring(err2)) end
+  say(""); say("→ Wenn alles OK ist: reboot")
 end
 
 local ok,err=pcall(run) if not ok then printError(err) end
