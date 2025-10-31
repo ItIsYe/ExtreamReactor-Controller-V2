@@ -1,6 +1,6 @@
--- installer.lua  (XReactor Light/Role-based Installer • AUX-Node immer dabei)
+-- installer.lua  (XReactor Light/Role-based Installer • mit Launchern & role.txt)
 -- Repo: https://github.com/ItIsYe/ExtreamReactor-Controller-V2
--- Nutzung: dofile("installer.lua")  oder  wget run <RAW-URL>
+-- Nutzung: dofile("installer.lua")
 
 local REPO_BASE = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main"
 
@@ -32,13 +32,16 @@ local function http_get(url)
   return body
 end
 
+local function save_text(path, text)
+  ensureDir(path)
+  if #text > getFree() - 2048 then return false, "Out of space" end
+  local f = fs.open(path, "w"); f.write(text); f.close(); return true
+end
+
 local function save_url(url, path)
   local body, err = http_get(url)
   if not body then return false, err end
-  ensureDir(path)
-  if #body > getFree() - 2048 then return false, "Out of space" end
-  local f = fs.open(path, "w"); f.write(body); f.close()
-  return true
+  return save_text(path, body)
 end
 
 local function say(...) print(table.concat({...}," ")) end
@@ -62,23 +65,23 @@ local function choose_role()
   say("  [1] MASTER  (UI/Monitor empfohlen)")
   say("  [2] AUX     (Worker/Textmodus)")
   local sel = ask("Auswahl 1/2", "2")
-  if tostring(sel)=="1" or tostring(sel):lower()=="master" then return "MASTER" end
-  return "AUX"
+  if tostring(sel)=="1" or tostring(sel):lower()=="master" then return "MASTER","master" end
+  return "AUX","node"
 end
 
 -- ---------- manifests (quelle -> ziel) ----------
--- IMMER installieren (inkl. AUX, für sicheren Fallback):
+-- Basis inkl. AUX-Node (für sicheren Fallback):
 local MANIFEST_BASE = {
   {"src/shared/protocol.lua", "/xreactor/shared/protocol.lua"},
   {"src/shared/identity.lua", "/xreactor/shared/identity.lua"},
   {"src/shared/log.lua",      "/xreactor/shared/log.lua"},
-  {"src/node/aux_node.lua",   "/xreactor/node/aux_node.lua"},   -- <-- NEU: immer mit dabei!
+  {"src/node/aux_node.lua",   "/xreactor/node/aux_node.lua"}, -- immer dabei
   {"startup.lua",             "/startup.lua"},
 }
 
--- Zusätzliche Dateien nur für MASTER-UI:
+-- Zusätzliche Dateien für MASTER-UI:
 local MANIFEST_MASTER = {
-  {"xreactor/shared/gui.lua",             "/xreactor/shared/gui.lua"}, -- GUI aus Repo (falls vorhanden)
+  {"xreactor/shared/gui.lua",             "/xreactor/shared/gui.lua"},
   {"src/master/master_home.lua",          "/xreactor/master/master_home.lua"},
   {"src/master/fuel_panel.lua",           "/xreactor/master/fuel_panel.lua"},
   {"src/master/waste_panel.lua",          "/xreactor/master/waste_panel.lua"},
@@ -90,29 +93,40 @@ local MANIFEST_MASTER = {
 local function write_config_identity(role)
   local path="/xreactor/config_identity.lua"
   if fs.exists(path) then say("Config existiert bereits:", path); return end
-  ensureDir(path)
-  local f=fs.open(path,"w")
-  f.write(string.format([[return {
+  local tpl = ([[return {
   role     = "%s",
   id       = "01",
   hostname = "",
   cluster  = "XR-CLUSTER-ALPHA",
   token    = "xreactor",
-}]], role))
-  f.close(); say("Config geschrieben:", path)
+}]])
+  save_text(path, string.format(tpl, role))
+  say("Config geschrieben:", path)
 end
 
 local function write_config_master()
   local path="/xreactor/config_master.lua"
   if fs.exists(path) then return end
-  ensureDir(path)
-  local f=fs.open(path,"w")
-  f.write([[return {
+  local tpl = [[return {
   modem_side   = nil,   -- z.B. "right"; nil = auto
   monitor_side = nil,   -- z.B. "top";   nil = auto
   text_scale   = 0.5,
-}]])
-  f.close()
+}]]
+  save_text(path, tpl)
+end
+
+-- ---------- launcher & role.txt ----------
+local function write_launchers()
+  -- /xreactor/master -> ruft master_home.lua
+  save_text("/xreactor/master", 'shell.run("/xreactor/master/master_home.lua")')
+  -- /xreactor/node -> ruft aux_node.lua
+  save_text("/xreactor/node", 'shell.run("/xreactor/node/aux_node.lua")')
+  say("Launcher angelegt: /xreactor/master und /xreactor/node")
+end
+
+local function write_role_txt(role_lower)
+  save_text("/xreactor/role.txt", role_lower.."\n")
+  say("role.txt gesetzt:", role_lower)
 end
 
 -- ---------- core ----------
@@ -136,11 +150,10 @@ local function run()
   self_install()
   ensure_dirs()
 
-  local role = choose_role()
+  local role, role_lower = choose_role()
   say("Gewählte Rolle:", role); say("")
   say("Freier Speicher vor Installation:", fmtBytes(getFree()))
 
-  -- Installationsplan: Basis (inkl. AUX) + ggf. MASTER
   local plan = {}
   for _,p in ipairs(MANIFEST_BASE) do plan[#plan+1]=p end
   if role=="MASTER" then for _,p in ipairs(MANIFEST_MASTER) do plan[#plan+1]=p end end
@@ -149,7 +162,7 @@ local function run()
   if not ok then
     if tostring(err):match("Out of space") then
       say(""); say("❌ Nicht genug Speicherplatz.")
-      say("Tipp:  delete /xreactor/log.txt  oder alte Ordner löschen (z.B. /old /logs /programs) oder Advanced Computer nutzen.")
+      say("Tipp:  delete /xreactor/log.txt  oder alte Ordner löschen (/old /logs /programs) oder Advanced Computer nutzen.")
       return
     else
       say(""); say("❌ Download-Fehler: ", tostring(err)); return
@@ -158,6 +171,8 @@ local function run()
 
   write_config_identity(role)
   if role=="MASTER" then write_config_master() end
+  write_launchers()
+  write_role_txt(role_lower)
 
   say(""); say("✅ Installation abgeschlossen.  Empfohlen: reboot")
 end
