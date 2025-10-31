@@ -1,0 +1,1 @@
+-- startup.lua (Universal Autostart – finale Version)
