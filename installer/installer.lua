@@ -1,20 +1,19 @@
--- installer.lua  (XReactor Light/Role-based Installer • mit Launchern & role.txt)
--- Repo: https://github.com/ItIsYe/ExtreamReactor-Controller-V2
--- Nutzung: dofile("installer.lua")
-
+-- installer.lua  (XReactor Installer mit robustem save_text)
 local REPO_BASE = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main"
 
--- ---------- utils ----------
+-- === Hilfsfunktionen ===
 local function ensureDir(path)
-  local parts = {}; for p in string.gmatch(path, "[^/]+") do parts[#parts+1]=p end
+  local parts = {}
+  for p in string.gmatch(path, "[^/]+") do parts[#parts+1] = p end
   if #parts <= 1 then return end
-  local dir = "/"..table.concat(parts, "/", 1, #parts-1)
+  local dir = "/" .. table.concat(parts, "/", 1, #parts - 1)
   if not fs.exists(dir) then fs.makeDir(dir) end
 end
 
 local function fmtBytes(n)
-  local u={"B","KB","MB"}; local i=1
-  while n>1024 and i<#u do n=n/1024 i=i+1 end
+  local u = { "B", "KB", "MB" }
+  local i = 1
+  while n > 1024 and i < #u do n = n / 1024 i = i + 1 end
   return string.format("%.1f %s", n, u[i])
 end
 
@@ -35,7 +34,11 @@ end
 local function save_text(path, text)
   ensureDir(path)
   if #text > getFree() - 2048 then return false, "Out of space" end
-  local f = fs.open(path, "w"); f.write(text); f.close(); return true
+  local f = fs.open(path, "w")
+  if not f then return false, "Pfad nicht verfügbar oder kein Speicherplatz" end
+  f.write(text)
+  f.close()
+  return true
 end
 
 local function save_url(url, path)
@@ -44,55 +47,61 @@ local function save_url(url, path)
   return save_text(path, body)
 end
 
-local function say(...) print(table.concat({...}," ")) end
+local function say(...) print(table.concat({...}, " ")) end
 local function ask(prompt, def)
-  write(prompt .. (def and (" ["..def.."]") or "") .. ": ")
-  local a = read(); if a=="" and def then a=def end; return a
+  write(prompt .. (def and (" [" .. def .. "]") or "") .. ": ")
+  local a = read()
+  if a == "" and def then a = def end
+  return a
 end
 
--- ---------- self install ----------
-local function self_install()
-  local target = "/xreactor/installer.lua"
-  say("== ExtreamReactor Installer ==")
-  say("Speichere Installer nach ", target, " …")
-  local ok, err = save_url(REPO_BASE.."/installer/installer.lua", target)
-  if ok then say("Installer aktualisiert.") else say("Hinweis: Konnte Original-Installer nicht speichern (", tostring(err), ").") end
-end
-
--- ---------- role ----------
+-- === Installer Hauptlogik ===
 local function choose_role()
-  say(""); say("Welche Rolle soll dieser Computer übernehmen?")
+  say("")
+  say("Welche Rolle soll dieser Computer übernehmen?")
   say("  [1] MASTER  (UI/Monitor empfohlen)")
   say("  [2] AUX     (Worker/Textmodus)")
   local sel = ask("Auswahl 1/2", "2")
-  if tostring(sel)=="1" or tostring(sel):lower()=="master" then return "MASTER","master" end
-  return "AUX","node"
+  if tostring(sel) == "1" or tostring(sel):lower() == "master" then
+    return "MASTER", "master"
+  end
+  return "AUX", "node"
 end
 
--- ---------- manifests (quelle -> ziel) ----------
--- Basis inkl. AUX-Node (für sicheren Fallback):
 local MANIFEST_BASE = {
-  {"src/shared/protocol.lua", "/xreactor/shared/protocol.lua"},
-  {"src/shared/identity.lua", "/xreactor/shared/identity.lua"},
-  {"src/shared/log.lua",      "/xreactor/shared/log.lua"},
-  {"src/node/aux_node.lua",   "/xreactor/node/aux_node.lua"}, -- immer dabei
-  {"startup.lua",             "/startup.lua"},
+  { "src/shared/protocol.lua", "/xreactor/shared/protocol.lua" },
+  { "src/shared/identity.lua", "/xreactor/shared/identity.lua" },
+  { "src/shared/log.lua", "/xreactor/shared/log.lua" },
+  { "src/node/aux_node.lua", "/xreactor/node/aux_node.lua" },
+  { "startup.lua", "/startup.lua" },
 }
 
--- Zusätzliche Dateien für MASTER-UI:
 local MANIFEST_MASTER = {
-  {"xreactor/shared/gui.lua",             "/xreactor/shared/gui.lua"},
-  {"src/master/master_home.lua",          "/xreactor/master/master_home.lua"},
-  {"src/master/fuel_panel.lua",           "/xreactor/master/fuel_panel.lua"},
-  {"src/master/waste_panel.lua",          "/xreactor/master/waste_panel.lua"},
-  {"src/master/alarm_center.lua",         "/xreactor/master/alarm_center.lua"},
-  {"src/master/overview_panel.lua",       "/xreactor/master/overview_panel.lua"},
+  { "xreactor/shared/gui.lua", "/xreactor/shared/gui.lua" },
+  { "src/master/master_home.lua", "/xreactor/master/master_home.lua" },
+  { "src/master/fuel_panel.lua", "/xreactor/master/fuel_panel.lua" },
+  { "src/master/waste_panel.lua", "/xreactor/master/waste_panel.lua" },
+  { "src/master/alarm_center.lua", "/xreactor/master/alarm_center.lua" },
+  { "src/master/overview_panel.lua", "/xreactor/master/overview_panel.lua" },
 }
 
--- ---------- config templates ----------
+local function write_launchers()
+  save_text("/xreactor/master", 'shell.run("/xreactor/master/master_home.lua")')
+  save_text("/xreactor/node", 'shell.run("/xreactor/node/aux_node.lua")')
+  say("Launcher angelegt: /xreactor/master und /xreactor/node")
+end
+
+local function write_role_txt(role_lower)
+  save_text("/xreactor/role.txt", role_lower .. "\n")
+  say("role.txt gesetzt:", role_lower)
+end
+
 local function write_config_identity(role)
-  local path="/xreactor/config_identity.lua"
-  if fs.exists(path) then say("Config existiert bereits:", path); return end
+  local path = "/xreactor/config_identity.lua"
+  if fs.exists(path) then
+    say("Config existiert bereits:", path)
+    return
+  end
   local tpl = ([[return {
   role     = "%s",
   id       = "01",
@@ -105,7 +114,7 @@ local function write_config_identity(role)
 end
 
 local function write_config_master()
-  local path="/xreactor/config_master.lua"
+  local path = "/xreactor/config_master.lua"
   if fs.exists(path) then return end
   local tpl = [[return {
   modem_side   = nil,   -- z.B. "right"; nil = auto
@@ -115,31 +124,16 @@ local function write_config_master()
   save_text(path, tpl)
 end
 
--- ---------- launcher & role.txt ----------
-local function write_launchers()
-  -- /xreactor/master -> ruft master_home.lua
-  save_text("/xreactor/master", 'shell.run("/xreactor/master/master_home.lua")')
-  -- /xreactor/node -> ruft aux_node.lua
-  save_text("/xreactor/node", 'shell.run("/xreactor/node/aux_node.lua")')
-  say("Launcher angelegt: /xreactor/master und /xreactor/node")
-end
-
-local function write_role_txt(role_lower)
-  save_text("/xreactor/role.txt", role_lower.."\n")
-  say("role.txt gesetzt:", role_lower)
-end
-
--- ---------- core ----------
 local function ensure_dirs()
-  for _,d in ipairs({"/xreactor","/xreactor/shared","/xreactor/master","/xreactor/node"}) do
+  for _, d in ipairs({ "/xreactor", "/xreactor/shared", "/xreactor/master", "/xreactor/node" }) do
     if not fs.exists(d) then fs.makeDir(d) end
   end
 end
 
 local function download_set(set)
-  for i,p in ipairs(set) do
-    local src,dst = p[1], p[2]
-    local url = REPO_BASE.."/"..src
+  for i, p in ipairs(set) do
+    local src, dst = p[1], p[2]
+    local url = REPO_BASE .. "/" .. src
     say(string.format("[%d/%d] %s -> %s", i, #set, src, dst))
     local ok, err = save_url(url, dst)
     if not ok then error(string.format("Fehler bei %s: %s", dst, tostring(err))) end
@@ -147,34 +141,32 @@ local function download_set(set)
 end
 
 local function run()
-  self_install()
   ensure_dirs()
-
   local role, role_lower = choose_role()
-  say("Gewählte Rolle:", role); say("")
+  say("Gewählte Rolle:", role)
+  say("")
   say("Freier Speicher vor Installation:", fmtBytes(getFree()))
 
   local plan = {}
-  for _,p in ipairs(MANIFEST_BASE) do plan[#plan+1]=p end
-  if role=="MASTER" then for _,p in ipairs(MANIFEST_MASTER) do plan[#plan+1]=p end end
+  for _, p in ipairs(MANIFEST_BASE) do plan[#plan + 1] = p end
+  if role == "MASTER" then
+    for _, p in ipairs(MANIFEST_MASTER) do plan[#plan + 1] = p end
+  end
 
   local ok, err = pcall(download_set, plan)
   if not ok then
-    if tostring(err):match("Out of space") then
-      say(""); say("❌ Nicht genug Speicherplatz.")
-      say("Tipp:  delete /xreactor/log.txt  oder alte Ordner löschen (/old /logs /programs) oder Advanced Computer nutzen.")
-      return
-    else
-      say(""); say("❌ Download-Fehler: ", tostring(err)); return
-    end
+    say("")
+    say("❌ Fehler:", tostring(err))
+    return
   end
 
   write_config_identity(role)
-  if role=="MASTER" then write_config_master() end
+  if role == "MASTER" then write_config_master() end
   write_launchers()
   write_role_txt(role_lower)
 
-  say(""); say("✅ Installation abgeschlossen.  Empfohlen: reboot")
+  say("")
+  say("✅ Installation abgeschlossen. Empfohlen: reboot")
 end
 
 local ok, err = pcall(run)
