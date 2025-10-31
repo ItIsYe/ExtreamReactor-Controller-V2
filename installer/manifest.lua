@@ -1,0 +1,1 @@
+-- manifest.lua (Version 2025-10-31-3)
