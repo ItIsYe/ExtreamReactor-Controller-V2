@@ -1,6 +1,6 @@
 --========================================================
--- /xreactor/node/aux_node.lua
--- AUX-Node Basis: nutzt gemeinsame Runtime für Dispatcher + State-Machine + Heartbeat/HELLO
+-- /xreactor/node/fuel_node.lua
+-- Fuel-Management Node: Vorräte/Prognosen monitoren
 --========================================================
 local Runtime = dofile('/xreactor/shared/node_runtime.lua')
 
@@ -8,7 +8,7 @@ local M = {}
 
 function M.run(opts)
   local cfg = opts or {}
-  cfg.identity = cfg.identity or { role='AUX' }
+  cfg.identity = cfg.identity or { role='FUEL' }
   local rt = Runtime.create(cfg)
   rt:start()
   return rt

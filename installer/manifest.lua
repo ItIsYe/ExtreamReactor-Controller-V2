@@ -2,16 +2,19 @@
 -- ExtreamReactor-Controller-V2 — Manifest (AUTOSTART + AUX)
 --========================================================
 return {
-  version    = "2025-10-31-3",
+  version    = "2025-10-31-4",
   created_at = "2025-10-31T00:00:00Z",
   base_url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main",
 
   files = {
     -- Shared
-    { src = "src/shared/protocol.lua",    dst = "/xreactor/shared/protocol.lua" },  -- v1.1.0 (Identity)
-    { src = "src/shared/identity.lua",    dst = "/xreactor/shared/identity.lua" },  -- NEW
-    { src = "src/shared/log.lua",         dst = "/xreactor/shared/log.lua" },
-    { src = "src/shared/topbar.lua",      dst = "/xreactor/shared/topbar.lua" },    -- Health-Check
+    { src = "src/shared/protocol.lua",          dst = "/xreactor/shared/protocol.lua" },  -- v1.1.0 (Identity)
+    { src = "src/shared/identity.lua",          dst = "/xreactor/shared/identity.lua" },  -- NEW
+    { src = "src/shared/log.lua",               dst = "/xreactor/shared/log.lua" },
+    { src = "src/shared/topbar.lua",            dst = "/xreactor/shared/topbar.lua" },    -- Health-Check
+    { src = "src/shared/network_dispatcher.lua",dst = "/xreactor/shared/network_dispatcher.lua" },
+    { src = "src/shared/node_state_machine.lua",dst = "/xreactor/shared/node_state_machine.lua" },
+    { src = "src/shared/node_runtime.lua",      dst = "/xreactor/shared/node_runtime.lua" },
 
     -- Master UI
     { src = "src/master/master_home.lua",    dst = "/xreactor/master/master_home.lua" },
@@ -29,7 +32,11 @@ return {
     { src = "startup.lua",                   dst = "/startup.lua" },
 
     -- Node AUX (Platzhalter/Beispiel)
-    { src = "src/node/aux_node.lua",         dst = "/xreactor/node/aux_node.lua" },
+    { src = "src/node/aux_node.lua",            dst = "/xreactor/node/aux_node.lua" },
+    { src = "src/node/reactor_node.lua",        dst = "/xreactor/node/reactor_node.lua" },
+    { src = "src/node/fuel_node.lua",           dst = "/xreactor/node/fuel_node.lua" },
+    { src = "src/node/reprocessing_node.lua",   dst = "/xreactor/node/reprocessing_node.lua" },
+    { src = "src/node/energy_node.lua",         dst = "/xreactor/node/energy_node.lua" },
   },
 }
 

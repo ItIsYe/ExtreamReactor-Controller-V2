@@ -12,11 +12,16 @@ P.T = {
   NODE_HELLO   = "NODE_HELLO",
   NODE_STATE   = "NODE_STATE",
   TELEM        = "TELEM",
+  HEARTBEAT    = "HEARTBEAT",
+  STATE_UPDATE = "STATE_UPDATE",
+  TARGET_UPDATE= "TARGET_UPDATE",
   FUEL_CTRL    = "FUEL_CTRL",
   FUEL_STATUS  = "FUEL_STATUS",
   WASTE_CTRL   = "WASTE_CTRL",
   WASTE_TELEM  = "WASTE_TELEM",
   ALARM        = "ALARM",
+  MASTER_ELECTION = "MASTER_ELECTION",
+  MASTER_ANNOUNCE = "MASTER_ANNOUNCE",
 }
 
 function P.tag(msg, auth)                     -- Auth + Version anfügen
@@ -49,6 +54,26 @@ function P.make_node_hello(ident, extra)
 end
 function P.make_telem(ident, data_tbl)
   return P.attach_identity({ type=P.T.TELEM, data=data_tbl or {} }, ident)
+end
+
+function P.make_heartbeat(ident, data_tbl)
+  return P.attach_identity({ type=P.T.HEARTBEAT, data=data_tbl or {} }, ident)
+end
+
+function P.make_state_update(ident, data_tbl)
+  return P.attach_identity({ type=P.T.STATE_UPDATE, data=data_tbl or {} }, ident)
+end
+
+function P.make_target_update(ident, data_tbl)
+  return P.attach_identity({ type=P.T.TARGET_UPDATE, data=data_tbl or {} }, ident)
+end
+
+function P.make_master_announce(ident, data_tbl)
+  return P.attach_identity({ type=P.T.MASTER_ANNOUNCE, data=data_tbl or {} }, ident)
+end
+
+function P.make_master_election(ident, data_tbl)
+  return P.attach_identity({ type=P.T.MASTER_ELECTION, data=data_tbl or {} }, ident)
 end
 
 -- Alarm-Helfer
