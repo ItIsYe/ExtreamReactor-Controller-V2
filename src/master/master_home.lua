@@ -15,10 +15,10 @@ local CFG=(function()
   return t
 end)()
 
-local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
-local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side})
+local MasterCore = dofile("/xreactor/master/master_core.lua")
+local CORE = MasterCore.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side})
 
-local function bcast(msg) return DISP:publish(msg) end
+local function bcast(msg) return CORE:publish(msg) end
 
 -- GUI-Toolkit laden
 local GUI; do
@@ -60,9 +60,7 @@ local function open_fuel_panel()   shell.run("/xreactor/master/fuel_panel.lua") 
 local function open_waste_panel()  shell.run("/xreactor/master/waste_panel.lua")  end
 local function open_overview()     shell.run("/xreactor/master/overview_panel.lua") end
 
-local function dispatcher_loop()
-  DISP:start()
-end
+local function dispatcher_loop() CORE:start_dispatcher() end
 
 -- GUI
 local function build_gui()
@@ -71,7 +69,7 @@ local function build_gui()
   local scr=GUI.mkScreen("home","XReactor ▢ Master")
 
   TB = Topbar.create({title="XReactor ▢ Master", auth_token=CFG.auth_token, modem_side=CFG.modem_side, monitor_name=peripheral.getName(MON), window_s=300, show_clock=true, show_net=true, show_alarm=true, show_health=true})
-  TB:mount(GUI, scr); TB:attach_dispatcher(DISP)
+  TB:mount(GUI, scr); TB:attach_dispatcher(CORE:get_dispatcher())
 
   local btnFuel  = GUI.mkButton(4,4,22,7,"Fuel ▢ Manager",  open_fuel_panel, colors.green);  scr:add(btnFuel)
   local btnWaste = GUI.mkButton(30,4,22,7,"Waste ▢ Panel",  open_waste_panel, colors.orange); scr:add(btnWaste)
@@ -97,13 +95,17 @@ local function tui_loop()
     print(" [F] Fuel-Manager   [W] Waste-Panel")
     print(" [A] Alarm-Center   [O] System-Overview")
     print(" [R] Broadcast HELLO  [Q] Quit")
-    local e,k=os.pullEvent("key")
-    if k==keys.q then return
-    elseif k==keys.f then open_fuel_panel()
-    elseif k==keys.w then open_waste_panel()
-    elseif k==keys.a then open_alarm_center()
-    elseif k==keys.o then open_overview()
-    elseif k==keys.r then bcast({type="HELLO"}) end
+    local ev={os.pullEvent()}
+    CORE:handle_event(ev)
+    if ev[1]=="key" then
+      local k=ev[2]
+      if k==keys.q then return
+      elseif k==keys.f then open_fuel_panel()
+      elseif k==keys.w then open_waste_panel()
+      elseif k==keys.a then open_alarm_center()
+      elseif k==keys.o then open_overview()
+      elseif k==keys.r then bcast({type="HELLO"}) end
+    end
   end
 end
 
@@ -114,8 +116,11 @@ local function gui_loop()
   local tick=os.startTimer(1)
   while true do
     local ev={os.pullEvent()}
+    CORE:handle_event(ev)
     if ev[1]=="timer" and ev[2]==tick then
       request_redraw("tick"); tick=os.startTimer(1)
+    elseif ev[1]=="master_state_change" then
+      request_redraw("state")
     elseif ev[1]=="monitor_touch" or ev[1]=="mouse_click" or ev[1]=="mouse_drag" or ev[1]=="term_resize" then
       request_redraw(ev[1])
     elseif ev[1]=="ui_redraw" then
@@ -127,5 +132,6 @@ local function gui_loop()
 end
 
 print("Master-Startoberfläche ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
+CORE:start_timers()
 bcast({type="HELLO"})
 parallel.waitForAny(dispatcher_loop, gui_loop, tui_loop)
