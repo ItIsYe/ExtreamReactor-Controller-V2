@@ -43,19 +43,19 @@ function Core.create(cfg)
   cfg.on_target_update = function(runtime, msg, from)
     merge_target(msg)
     if type(control_fn) == 'function' then
-      pcall(control_fn, last_target, runtime, runtime:get_state_machine():get_state(), runtime:get_master_id(), 'target', from)
+      pcall(control_fn, last_target, runtime, runtime:get_state_machine():get_state(), runtime:get_master_id(), 'target', from, runtime.is_network_ok and runtime:is_network_ok())
     end
     if type(user_on_tgt) == 'function' then
-      pcall(user_on_tgt, runtime, msg, from, last_target)
+      pcall(user_on_tgt, runtime, msg, from, last_target, runtime.is_network_ok and runtime:is_network_ok())
     end
   end
 
   cfg.on_tick = function(runtime, state, master_id)
     if type(control_fn) == 'function' then
-      pcall(control_fn, last_target, runtime, state, master_id, 'tick')
+      pcall(control_fn, last_target, runtime, state, master_id, 'tick', nil, runtime.is_network_ok and runtime:is_network_ok())
     end
     if type(user_on_tick) == 'function' then
-      pcall(user_on_tick, runtime, state, master_id, last_target)
+      pcall(user_on_tick, runtime, state, master_id, last_target, runtime.is_network_ok and runtime:is_network_ok())
     end
   end
 

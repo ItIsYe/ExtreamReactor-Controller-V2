@@ -29,11 +29,21 @@ function M.create(opts)
     modem_side   = cfg.modem_side,
     identity     = tbl_copy(cfg.identity or {}),
     receive_wait = cfg.receive_wait or 0.2,
+    net_event    = cfg.net_status_event or 'dispatcher_network',
     _subs        = {},
     _running     = false,
+    _modem_ok    = false,
   }
 
-  ensure_modem(self.modem_side)
+  local function update_net_status(ok)
+    ok = ok and true or false
+    if ok ~= self._modem_ok then
+      self._modem_ok = ok
+      os.queueEvent(self.net_event, ok)
+    end
+  end
+
+  update_net_status(ensure_modem(self.modem_side))
 
   local function emit(type_name, handler, from_id, msg)
     local ok, err = pcall(handler, msg, from_id)
@@ -64,7 +74,8 @@ function M.create(opts)
   function self:publish(msg, target)
     if type(msg) ~= "table" then return false end
     if not msg.type then return false end
-    ensure_modem(self.modem_side)
+    local modem_ok = ensure_modem(self.modem_side)
+    update_net_status(modem_ok)
     local tagged = PROTO.tag(PROTO.attach_identity(msg, self.identity), self.auth_token)
     if target then
       return pcall(rednet.send, target, tagged)
@@ -85,9 +96,12 @@ function M.create(opts)
     local function safe_receive(timeout)
       local ok, from, msg = pcall(rednet.receive, timeout)
       if not ok then
-        ensure_modem(self.modem_side)
+        local modem_ok = ensure_modem(self.modem_side)
+        update_net_status(modem_ok)
+        if not modem_ok then sleep(timeout or self.receive_wait or 0.1) end
         return nil, nil, msg
       end
+      if from then update_net_status(true) end
       return from, msg
     end
 
@@ -110,6 +124,10 @@ function M.create(opts)
   function self:stop()
     self._running=false
     os.queueEvent("dispatcher_stop")
+  end
+
+  function self:is_online()
+    return self._modem_ok == true
   end
 
   return self

@@ -44,6 +44,7 @@ function Runtime.create(opts)
   local current_master = nil
   local election = { active=false, best_prio=nil, best_id=nil, deadline=0, announced=false }
   local SELF_ID = os.getComputerID()
+  local network_ok = dispatcher.is_online and dispatcher:is_online()
 
   local function log(msg)
     print(('[%s] %s'):format(ident.hostname or ident.id or 'node', tostring(msg)))
@@ -105,6 +106,7 @@ function Runtime.create(opts)
   function self:get_state_machine() return state end
   function self:get_dispatcher() return dispatcher end
   function self:get_master_id() return current_master end
+  function self:is_network_ok() return network_ok ~= false end
   function self:is_master_candidate() return is_candidate end
 
   function self:publish_telem(data_tbl)
@@ -191,6 +193,16 @@ function Runtime.create(opts)
         send_state_update(reason)
         if new=='LOST_MASTER' then start_election() end
         if new=='AUTO' or new=='MASTER' then reset_election() end
+      elseif ev[1]=='dispatcher_network' then
+        local online = ev[2] ~= false
+        if online ~= network_ok then
+          network_ok = online
+          if online then
+            log('Netzwerk wiederhergestellt – Master-Suche läuft weiter')
+          else
+            log('Netzwerk verloren – lokale Kontrolle bleibt aktiv')
+          end
+        end
       elseif ev[1]=='terminate' then
         dispatcher:stop(); running=false; return
       end
