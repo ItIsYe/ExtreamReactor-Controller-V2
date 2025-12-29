@@ -4,6 +4,7 @@
 --========================================================
 local PROTO = dofile("/xreactor/shared/protocol.lua")
 local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
+local Model = dofile("/xreactor/master/master_model.lua")
 
 local CFG=(function() local t={ auth_token="xreactor", modem_side="right", ui={text_scale=0.5} }
   if fs.exists("/xreactor/config_alarm.lua") then local ok,c=pcall(dofile,"/xreactor/config_alarm.lua"); if ok and type(c)=="table" then
@@ -11,6 +12,7 @@ local CFG=(function() local t={ auth_token="xreactor", modem_side="right", ui={t
   end end; return t end)()
 
 local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side})
+local MODEL = Model.create(DISP)
 
 local GUI; do local ok,g=pcall(require,"xreactor.shared.gui"); if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end end
 local function load_ui_map() if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end; return {monitors={}, autoscale={enabled=false}} end
@@ -21,7 +23,6 @@ local MON=pick_monitor_for_role("alarm_center"); if MON and not GUI then pcall(M
 local Topbar = dofile("/xreactor/shared/topbar.lua")
 local TB
 
-local ALARMS = {} -- { {ts, level, code, msg, node, uid}, ... }
 local redraw_pending=false
 local function request_redraw(reason)
   if not (GUI and MON) then return end
@@ -29,15 +30,7 @@ local function request_redraw(reason)
   redraw_pending=true
   os.queueEvent("ui_redraw", reason or "update")
 end
-local function push_alarm(a) table.insert(ALARMS, 1, a); if #ALARMS>100 then table.remove(ALARMS) end end
-
-local function on_alarm(msg)
-  if type(msg) ~= "table" then return end
-  push_alarm({ ts=os.date("%H:%M:%S"), level=string.upper(msg.level or "INFO"), code=msg.code or "?", msg=msg.msg or "", node=msg.node or "-", uid=msg.uid or "-" })
-  request_redraw("alarm")
-end
-
-DISP:subscribe("ALARM", on_alarm)
+MODEL:subscribe('alarm', function() request_redraw('alarm') end)
 
 local function dispatcher_loop()
   DISP:start()
@@ -50,20 +43,12 @@ local function build_gui()
   TB = Topbar.create({title="Alarm ▢ Center", auth_token=CFG.auth_token, modem_side=CFG.modem_side, monitor_name=peripheral.getName(MON)}); TB:mount(GUI,scr); TB:attach_dispatcher(DISP)
 
   local lst=GUI.mkList(2,3,78,16,{}); scr:add(lst)
-  local btnAck = GUI.mkButton(2,20,12,3,"Quittieren", function() ALARMS={}; request_redraw("ack") end, colors.gray); scr:add(btnAck)
+  local btnAck = GUI.mkButton(2,20,12,3,"Quittieren", function() MODEL:ack_alarms() end, colors.gray); scr:add(btnAck)
   local btnHome= GUI.mkButton(16,20,10,3,"Home", function() shell.run("/xreactor/master/master_home.lua") end, colors.lightGray); scr:add(btnHome)
 
   scr._redraw=function()
-    local rows={}
-    if #ALARMS==0 then rows={{text="(Keine Alarme)", color=colors.lightGray}}
-    else
-      for _,a in ipairs(ALARMS) do
-        local color = (a.level=="CRIT" and colors.red) or (a.level=="WARN" and colors.orange) or colors.white
-        local line = string.format("%s [%s] %s %-8s %s", a.ts, a.level, a.code, a.node or "-", a.msg or "")
-        table.insert(rows, {text=line, color=color})
-      end
-    end
-    lst.props.items=rows; TB:update()
+    lst.props.items = MODEL:get_alarm_rows()
+    TB:update()
   end
 
   router:register(scr); router:show("alarm")
@@ -75,11 +60,10 @@ local function tui_loop()
   while true do
     term.clear(); term.setCursorPos(1,1)
     print("Alarm ▢ Center  "..os.date("%H:%M:%S")); print(string.rep("-",78))
-    for _,a in ipairs(ALARMS) do print(string.format("%s [%s] %s %s", a.ts, a.level, a.code or "?", a.msg or "")) end
-    if #ALARMS==0 then print("(Keine Alarme)") end
+    for _,row in ipairs(MODEL:get_alarm_rows()) do print(row.text) end
     print(string.rep("-",78)); print("[C] Clear  [H] Home  [Q] Quit")
     local e,k=os.pullEvent("key")
-    if k==keys.q then return elseif k==keys.c then ALARMS={} elseif k==keys.h then shell.run("/xreactor/master/master_home.lua") end
+    if k==keys.q then return elseif k==keys.c then MODEL:ack_alarms() elseif k==keys.h then shell.run("/xreactor/master/master_home.lua") end
   end
 end
 

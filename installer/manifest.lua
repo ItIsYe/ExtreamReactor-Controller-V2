@@ -2,7 +2,7 @@
 -- ExtreamReactor-Controller-V2 — Manifest (AUTOSTART + Nodes)
 --========================================================
 return {
-  version    = "2025-10-31-7",
+  version    = "2025-10-31-8",
   created_at = "2025-10-31T00:00:00Z",
   base_url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main",
 
@@ -21,6 +21,7 @@ return {
 
     -- Master UI
     { src = "src/master/master_core.lua",    dst = "/xreactor/master/master_core.lua" },
+    { src = "src/master/master_model.lua",   dst = "/xreactor/master/master_model.lua" },
     { src = "src/master/master_home.lua",    dst = "/xreactor/master/master_home.lua" },
     { src = "src/master/fuel_panel.lua",     dst = "/xreactor/master/fuel_panel.lua" },
     { src = "src/master/waste_panel.lua",    dst = "/xreactor/master/waste_panel.lua" },

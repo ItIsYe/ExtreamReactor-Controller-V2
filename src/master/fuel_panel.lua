@@ -6,6 +6,7 @@
 --========================================================
 local PROTO = dofile("/xreactor/shared/protocol.lua")
 local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
+local Model = dofile("/xreactor/master/master_model.lua")
 
 local CFG=(function() local t={ auth_token="xreactor", modem_side="right", ui={text_scale=0.5} }
   if fs.exists("/xreactor/config_fuel.lua") then local ok,c=pcall(dofile,"/xreactor/config_fuel.lua"); if ok and type(c)=="table" then
@@ -13,6 +14,7 @@ local CFG=(function() local t={ auth_token="xreactor", modem_side="right", ui={t
   end end; return t end)()
 
 local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side})
+local MODEL = Model.create(DISP)
 
 local GUI; do local ok,g=pcall(require,"xreactor.shared.gui"); if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end end
 local function load_ui_map() if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end; return {monitors={}, autoscale={enabled=false}} end
@@ -24,7 +26,6 @@ local Topbar = dofile("/xreactor/shared/topbar.lua")
 local TB
 
 -- Zustand
-local TELEM = {} -- uid -> {fuel_pct, rpm, power_mrf, last_seen, hostname}
 local redraw_pending=false
 local function request_redraw(reason)
   if not (GUI and MON) then return end
@@ -32,15 +33,7 @@ local function request_redraw(reason)
   redraw_pending=true
   os.queueEvent("ui_redraw", reason or "update")
 end
-
-local function on_telem(msg, from_id)
-  if type(msg) ~= "table" or type(msg.data) ~= "table" then return end
-  local d=msg.data; TELEM[d.uid or ("id:"..tostring(from_id))] = { fuel_pct=d.fuel_pct, rpm=d.rpm, power_mrf=d.power_mrf, last_seen=os.epoch("utc")/1000, hostname=msg.hostname }
-  request_redraw("telem")
-end
-
--- GUI
-DISP:subscribe(PROTO.T.TELEM, on_telem)
+MODEL:subscribe('fuel', function() request_redraw('data') end)
 
 local function dispatcher_loop()
   DISP:start()
@@ -57,13 +50,8 @@ local function build_gui()
   local btnHome = GUI.mkButton(2,20,10,3,"Home", function() shell.run("/xreactor/master/master_home.lua") end, colors.lightGray); scr:add(btnHome)
 
   scr._redraw=function()
-    local rows={}
-    for uid,d in pairs(TELEM) do
-      local fuel = d.fuel_pct and (tostring(d.fuel_pct).."%") or "n/a"
-      table.insert(rows, {text=string.format("%-12s Fuel:%-4s RPM:%-5d P:%-7d host:%s", tostring(uid), fuel, tonumber(d.rpm or 0), tonumber(d.power_mrf or 0), tostring(d.hostname or "-")), color=colors.white})
-    end
-    if #rows==0 then rows={{text="(Noch keine Telemetrie empfangen)", color=colors.gray}} end
-    list.props.items=rows; TB:update()
+    list.props.items = MODEL:get_fuel_rows()
+    TB:update()
   end
 
   router:register(scr); router:show("fuel")
@@ -75,12 +63,7 @@ local function tui_loop()
   while true do
     term.clear(); term.setCursorPos(1,1)
     print("Fuel ▢ Manager  "..os.date("%H:%M:%S")); print(string.rep("-",78))
-    local count=0
-    for uid,d in pairs(TELEM) do
-      print(string.format("%-12s Fuel:%-4s RPM:%-5d P:%-7d host:%s", tostring(uid), d.fuel_pct and (d.fuel_pct.."%") or "n/a", d.rpm or 0, d.power_mrf or 0, tostring(d.hostname or "-")))
-      count=count+1
-    end
-    if count==0 then print("(Noch keine Telemetrie empfangen)") end
+    for _,row in ipairs(MODEL:get_fuel_rows()) do print(row.text) end
     print(string.rep("-",78)); print("[H] Home  [Q] Quit")
     local e,k=os.pullEvent("key"); if k==keys.q then return elseif k==keys.h then shell.run("/xreactor/master/master_home.lua") end
   end

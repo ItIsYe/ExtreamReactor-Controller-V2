@@ -4,6 +4,7 @@
 --========================================================
 local PROTO = dofile("/xreactor/shared/protocol.lua")
 local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
+local Model = dofile("/xreactor/master/master_model.lua")
 
 local CFG=(function() local t={ auth_token="xreactor", modem_side="right", ui={text_scale=0.5} }
   if fs.exists("/xreactor/config_waste.lua") then local ok,c=pcall(dofile,"/xreactor/config_waste.lua"); if ok and type(c)=="table" then
@@ -11,6 +12,7 @@ local CFG=(function() local t={ auth_token="xreactor", modem_side="right", ui={t
   end end; return t end)()
 
 local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side})
+local MODEL = Model.create(DISP)
 
 local GUI; do local ok,g=pcall(require,"xreactor.shared.gui"); if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end end
 local function load_ui_map() if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end; return {monitors={}, autoscale={enabled=false}} end
@@ -21,7 +23,6 @@ local MON=pick_monitor_for_role("waste_service"); if MON and not GUI then pcall(
 local Topbar = dofile("/xreactor/shared/topbar.lua")
 local TB
 
-local WASTE = {} -- Beispiel-Speicher (uid -> {host, last_seen, info})
 local redraw_pending=false
 local function request_redraw(reason)
   if not (GUI and MON) then return end
@@ -29,14 +30,7 @@ local function request_redraw(reason)
   redraw_pending=true
   os.queueEvent("ui_redraw", reason or "update")
 end
-
-local function on_telem(msg, from_id)
-  if type(msg) ~= "table" or type(msg.data) ~= "table" then return end
-  local d=msg.data; WASTE[d.uid or ("id:"..tostring(from_id))] = { host=msg.hostname, last_seen=os.epoch("utc")/1000, info=string.format("RPM:%d P:%d", tonumber(d.rpm or 0), tonumber(d.power_mrf or 0)) }
-  request_redraw("telem")
-end
-
-DISP:subscribe(PROTO.T.TELEM, on_telem)
+MODEL:subscribe('waste', function() request_redraw('data') end)
 
 local function dispatcher_loop()
   DISP:start()
@@ -52,12 +46,8 @@ local function build_gui()
   local btnHome=GUI.mkButton(2,20,10,3,"Home", function() shell.run("/xreactor/master/master_home.lua") end, colors.lightGray); scr:add(btnHome)
 
   scr._redraw=function()
-    local rows={}
-    for uid,d in pairs(WASTE) do
-      table.insert(rows, {text=string.format("%-12s host:%-12s info:%s", tostring(uid), tostring(d.host or "-"), tostring(d.info or "")), color=colors.white})
-    end
-    if #rows==0 then rows={{text="(Noch keine Daten)", color=colors.gray}} end
-    list.props.items=rows; TB:update()
+    list.props.items = MODEL:get_waste_rows()
+    TB:update()
   end
 
   router:register(scr); router:show("waste")
@@ -69,8 +59,7 @@ local function tui_loop()
   while true do
     term.clear(); term.setCursorPos(1,1)
     print("Waste ▢ Panel  "..os.date("%H:%M:%S")); print(string.rep("-",78))
-    local c=0; for uid,d in pairs(WASTE) do print(string.format("%-12s host:%-12s %s", tostring(uid), tostring(d.host or "-"), tostring(d.info or ""))); c=c+1 end
-    if c==0 then print("(Noch keine Daten)") end
+    for _,row in ipairs(MODEL:get_waste_rows()) do print(row.text) end
     print(string.rep("-",78)); print("[H] Home  [Q] Quit")
     local e,k=os.pullEvent("key"); if k==keys.q then return elseif k==keys.h then shell.run("/xreactor/master/master_home.lua") end
   end

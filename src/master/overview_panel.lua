@@ -2,12 +2,9 @@
 -- /xreactor/master/overview_panel.lua
 -- System Overview mit Identity (hostname/role/cluster), KPIs & Filtern
 --========================================================
-local function now_s() return os.epoch("utc")/1000 end
-local function n0(x,d) x=tonumber(x); if x==nil then return d or 0 end; return x end
-local function age_s(ts) local a=now_s()-(ts or 0); if a<0 then a=0 end; return math.floor(a) end
-
 local PROTO = dofile("/xreactor/shared/protocol.lua")
 local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
+local Model = dofile("/xreactor/master/master_model.lua")
 local IDMOD = dofile("/xreactor/shared/identity.lua")
 local IDENT  = IDMOD.load_identity()
 
@@ -20,6 +17,7 @@ local CFG=(function()
 end)()
 
 local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side, identity=IDENT})
+local MODEL = Model.create(DISP, { telem_timeout_s = CFG.telem_timeout_s })
 local function bcast(msg) return DISP:publish(msg) end
 
 local GUI; do local ok,g=pcall(require,"xreactor.shared.gui"); if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end end
@@ -31,7 +29,6 @@ local MON=pick_monitor_for_role("system_overview"); if MON and not GUI then pcal
 local Topbar = dofile("/xreactor/shared/topbar.lua")
 local TB; local function go_home() shell.run("/xreactor/master/master_home.lua") end
 
-local STATE = { nodes={}, sort_by="POWER", filter_online=true, filter_role="ALL" }
 local redraw_pending=false
 local function request_redraw(reason)
   if not (GUI and MON) then return end
@@ -39,30 +36,7 @@ local function request_redraw(reason)
   redraw_pending=true
   os.queueEvent("ui_redraw", reason or "update")
 end
-local function key_for(uid, id) if uid and tostring(uid)~="" then return tostring(uid) end; return "id:"..tostring(id or "?") end
-local function ensure_node(uid, id) local k=key_for(uid,id); local n=STATE.nodes[k]; if not n then n={ uid=uid or k, rednet_id=id or 0, hostname="-", role="-", cluster="-", rpm=0, power_mrf=0, flow=0, fuel_pct=nil, last_seen=0, state="-" } STATE.nodes[k]=n end; return n end
-
-local function on_telem(msg, from_id)
-  if type(msg) ~= "table" or type(msg.data) ~= "table" then return end
-  local d=msg.data; local n=ensure_node(d.uid, from_id)
-  n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster
-  n.rpm=n0(d.rpm,n.rpm); n.power_mrf=n0(d.power_mrf,n.power_mrf); n.flow=n0(d.flow,n.flow); n.fuel_pct=tonumber(d.fuel_pct or n.fuel_pct); n.last_seen=now_s()
-  request_redraw("telem")
-end
-
-local function on_hello(msg, from_id)
-  local n=ensure_node(msg.uid, from_id); n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.last_seen=now_s()
-  request_redraw("hello")
-end
-
-local function on_state(msg, from_id)
-  local n=ensure_node(msg.uid, from_id); n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.state=tostring(msg.state or n.state or "-"); n.last_seen=now_s()
-  request_redraw("state")
-end
-
-DISP:subscribe(PROTO.T.TELEM, on_telem)
-DISP:subscribe(PROTO.T.NODE_HELLO, on_hello)
-DISP:subscribe(PROTO.T.NODE_STATE, on_state)
+MODEL:subscribe('overview', function() request_redraw('data') end)
 
 local function dispatcher_loop()
   DISP:start()
@@ -105,33 +79,19 @@ local function build_gui()
 
   local lst=GUI.mkList(2,5,78,14,{}); scr:add(lst)
 
-  local btnSort=GUI.mkSelector(2,20,18,{"POWER","RPM","HOST"},"POWER",function(v) STATE.sort_by=v end); scr:add(btnSort)
-  local btnFilt=GUI.mkSelector(22,20,14,{"ONLINE","ALLE"},"ONLINE",function(v) STATE.filter_online=(v=="ONLINE") end); scr:add(btnFilt)
-  local btnRole=GUI.mkSelector(38,20,18,{"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"},"ALL",function(v) STATE.filter_role=v end); scr:add(btnRole)
+  local btnSort=GUI.mkSelector(2,20,18,{"POWER","RPM","HOST"},"POWER",function(v) MODEL:set_overview_filter('sort_by', v) end); scr:add(btnSort)
+  local btnFilt=GUI.mkSelector(22,20,14,{"ONLINE","ALLE"},"ONLINE",function(v) MODEL:set_overview_filter('filter_online', v=="ONLINE") end); scr:add(btnFilt)
+  local btnRole=GUI.mkSelector(38,20,18,{"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"},"ALL",function(v) MODEL:set_overview_filter('filter_role', v) end); scr:add(btnRole)
   local btnRef =GUI.mkButton(58,20,10,3,"Refresh", function() bcast(PROTO.make_hello(IDENT)) end, colors.gray); scr:add(btnRef)
   local btnHome=GUI.mkButton(70,20,10,3,"Home",    function() go_home() end, colors.lightGray); scr:add(btnHome)
 
   scr._redraw=function()
-    local k=compute_kpis()
-    kpiA.props.text=("Power: %d RF/t"):format(math.floor(k.total_power+0.5))
-    kpiB.props.text=("Ø RPM: %d"):format(k.rpm_avg or 0)
-    kpiC.props.text=("Online: %d / %d"):format(k.online or 0, (k.online or 0)+(k.offline or 0))
-    kpiD.props.text=(k.fuel_min and k.fuel_max) and ("Fuel%%: %d .. %d"):format(k.fuel_min,k.fuel_max) or "Fuel%: n/a"
-
-    local rows={}
-    local arr=nodes_sorted()
-    if #arr==0 then rows={{text="(Noch keine TELEM gesehen – Refresh oder kurz warten)", color=colors.gray}}
-    else
-      for _,n in ipairs(arr) do
-        local age=age_s(n.last_seen or 0); local online = age <= (CFG.telem_timeout_s or 10)
-        local fuel = n.fuel_pct and (tostring(n.fuel_pct).."%") or "n/a"
-        local line=string.format("%-16s %-7s %-8s  P:%-6d RPM:%-5d Flow:%-5d Fuel:%-4s  %2ss  %s",
-          tostring(n.hostname or "-"), tostring(n.role or "-"), tostring(n.cluster or "-"),
-          n0(n.power_mrf), n0(n.rpm), n0(n.flow), fuel, age, tostring(n.state or "-"))
-        table.insert(rows, {text=line, color=online and colors.white or colors.lightGray})
-      end
-    end
-    lst.props.items=rows
+    local v = MODEL:get_overview_view()
+    kpiA.props.text = v.kpi_power_text
+    kpiB.props.text = v.kpi_rpm_text
+    kpiC.props.text = v.kpi_online_text
+    kpiD.props.text = v.kpi_fuel_text
+    lst.props.items = v.rows
     TB:update()
   end
 
@@ -144,19 +104,13 @@ local function tui_loop()
   local function bhello() bcast(PROTO.make_hello(IDENT)) end
   while true do
     term.clear(); term.setCursorPos(1,1)
-    local k=compute_kpis()
+    local v = MODEL:get_overview_view()
     print("System ▢ Overview (TUI)  "..os.date("%H:%M:%S"))
     print(string.rep("-",78))
-    local fuel = (k.fuel_min and k.fuel_max) and (tostring(k.fuel_min)..".."..tostring(k.fuel_max)) or "n/a"
-    print(("Power: %d RF/t   ØRPM: %d   Online: %d/%d   Fuel%%: %s   RoleFilter: %s"):format(
-      math.floor(k.total_power+0.5), k.rpm_avg, k.online or 0, (k.online or 0)+(k.offline or 0), fuel, STATE.filter_role))
+    print(string.format("%s   %s   %s   %s", v.kpi_power_text, v.kpi_rpm_text, v.kpi_online_text, v.kpi_fuel_text))
     print(string.rep("-",78))
-    for _,n in ipairs(nodes_sorted()) do
-      local age=age_s(n.last_seen or 0); local online=age <= (CFG.telem_timeout_s or 10)
-      local f = n.fuel_pct and (tostring(n.fuel_pct).."%") or "n/a"
-      print(string.format("%-16s %-7s %-8s  P:%-6d RPM:%-5d Flow:%-5d Fuel:%-4s  %2ss  %s %s",
-        tostring(n.hostname or "-"), tostring(n.role or "-"), tostring(n.cluster or "-"),
-        n0(n.power_mrf), n0(n.rpm), n0(n.flow), f, age, tostring(n.state or "-"), online and "" or "(OFF)"))
+    for _,row in ipairs(v.rows) do
+      print(row.text)
     end
     print(string.rep("-",78))
     print("[S] POWER/RPM/HOST  [F] ONLINE/ALLE  [L] Role-Filter  [R] Refresh  [H] Home  [Q] Quit")
@@ -164,9 +118,12 @@ local function tui_loop()
     if kb==keys.q then return
     elseif kb==keys.r then bhello()
     elseif kb==keys.h then go_home()
-    elseif kb==keys.s then STATE.sort_by = (STATE.sort_by=="POWER") and "RPM" or (STATE.sort_by=="RPM" and "HOST" or "POWER")
-    elseif kb==keys.f then STATE.filter_online = not STATE.filter_online
-    elseif kb==keys.l then local order={"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"}; local i=1; for ii,v in ipairs(order) do if v==STATE.filter_role then i=ii break end end; STATE.filter_role = order[i%#order+1] end
+    elseif kb==keys.s then
+      local current = v.filters.sort_by
+      local nexts = (current=="POWER") and "RPM" or (current=="RPM" and "HOST" or "POWER")
+      MODEL:set_overview_filter('sort_by', nexts)
+    elseif kb==keys.f then MODEL:set_overview_filter('filter_online', not v.filters.filter_online)
+    elseif kb==keys.l then local order={"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"}; local i=1; for ii,val in ipairs(order) do if val==v.filters.filter_role then i=ii break end end; MODEL:set_overview_filter('filter_role', order[i%#order+1]) end
   end
 end
 
