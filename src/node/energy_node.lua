@@ -1,17 +1,17 @@
 --========================================================
 -- /xreactor/node/energy_node.lua
--- Energy-Storage Node: liest Speicher und aggregiert
+-- Energy-Node: nutzt Node-Core für Telemetrie + Master-Integration
 --========================================================
-local Runtime = dofile('/xreactor/shared/node_runtime.lua')
+local NodeCore = dofile('/xreactor/node/node_core.lua')
 
 local M = {}
 
 function M.run(opts)
   local cfg = opts or {}
   cfg.identity = cfg.identity or { role='ENERGY' }
-  local rt = Runtime.create(cfg)
-  rt:start()
-  return rt
+  local node = NodeCore.create(cfg)
+  node:start()
+  return node
 end
 
 return M
