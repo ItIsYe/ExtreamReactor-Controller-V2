@@ -42,7 +42,7 @@ function Runtime.create(opts)
   local ELECTION_WINDOW= cfg.election_window or 4
 
   local current_master = nil
-  local election = { active=false, best_prio=nil, best_id=nil, deadline=0 }
+  local election = { active=false, best_prio=nil, best_id=nil, deadline=0, announced=false }
   local SELF_ID = os.getComputerID()
 
   local function log(msg)
@@ -50,7 +50,7 @@ function Runtime.create(opts)
   end
 
   local function reset_election()
-    election.active=false; election.best_prio=nil; election.best_id=nil; election.deadline=0
+    election.active=false; election.best_prio=nil; election.best_id=nil; election.deadline=0; election.announced=false
   end
 
   local function register_candidate(prio, node_id)
@@ -76,13 +76,19 @@ function Runtime.create(opts)
     dispatcher:publish(PROTO.make_state_update(ident, { state=state:get_state(), reason=reason, master=current_master }))
   end
 
+  local function announce_candidate()
+    if election.announced then return end
+    election.announced = true
+    dispatcher:publish(PROTO.make_master_election(ident, { priority=ident.priority, node_id=SELF_ID }))
+  end
+
   local function start_election()
     if not is_candidate then return end
     reset_election()
     election.active=true
     election.deadline = now_s() + ELECTION_WINDOW
     register_candidate(ident.priority, SELF_ID)
-    dispatcher:publish(PROTO.make_master_election(ident, { priority=ident.priority, node_id=SELF_ID }))
+    announce_candidate()
   end
 
   local function conclude_election()
@@ -147,8 +153,7 @@ function Runtime.create(opts)
     local prio = data.priority or msg.priority
     local node_id = data.node_id or from
     register_candidate(prio, node_id)
-    if not election.active then start_election() end
-    dispatcher:publish(PROTO.make_master_election(ident, { priority=ident.priority, node_id=SELF_ID }))
+    if not election.active then start_election() else announce_candidate() end
   end)
 
   local timers = {}
