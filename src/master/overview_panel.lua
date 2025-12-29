@@ -7,6 +7,7 @@ local function n0(x,d) x=tonumber(x); if x==nil then return d or 0 end; return x
 local function age_s(ts) local a=now_s()-(ts or 0); if a<0 then a=0 end; return math.floor(a) end
 
 local PROTO = dofile("/xreactor/shared/protocol.lua")
+local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
 local IDMOD = dofile("/xreactor/shared/identity.lua")
 local IDENT  = IDMOD.load_identity()
 
@@ -18,9 +19,8 @@ local CFG=(function()
   return t
 end)()
 
-assert(peripheral.getType(CFG.modem_side)=="modem","Kein Modem an "..tostring(CFG.modem_side))
-if not rednet.isOpen(CFG.modem_side) then rednet.open(CFG.modem_side) end
-local function bcast(msg) msg=PROTO.tag(msg, CFG.auth_token); return rednet.broadcast(msg) end
+local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side, identity=IDENT})
+local function bcast(msg) return DISP:publish(msg) end
 
 local GUI; do local ok,g=pcall(require,"xreactor.shared.gui"); if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end end
 local function load_ui_map() if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end; return {monitors={}, autoscale={enabled=false}} end
@@ -35,21 +35,27 @@ local STATE = { nodes={}, sort_by="POWER", filter_online=true, filter_role="ALL"
 local function key_for(uid, id) if uid and tostring(uid)~="" then return tostring(uid) end; return "id:"..tostring(id or "?") end
 local function ensure_node(uid, id) local k=key_for(uid,id); local n=STATE.nodes[k]; if not n then n={ uid=uid or k, rednet_id=id or 0, hostname="-", role="-", cluster="-", rpm=0, power_mrf=0, flow=0, fuel_pct=nil, last_seen=0, state="-" } STATE.nodes[k]=n end; return n end
 
-local function rx_loop()
-  while true do
-    local id,msg=rednet.receive(0.5)
-    if id and type(msg)=="table" and PROTO.is_auth(msg, CFG.auth_token) then
-      if msg.type==PROTO.T.TELEM and type(msg.data)=="table" then
-        local d=msg.data; local n=ensure_node(d.uid, id)
-        n.rednet_id=id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster
-        n.rpm=n0(d.rpm,n.rpm); n.power_mrf=n0(d.power_mrf,n.power_mrf); n.flow=n0(d.flow,n.flow); n.fuel_pct=tonumber(d.fuel_pct or n.fuel_pct); n.last_seen=now_s()
-      elseif msg.type==PROTO.T.NODE_HELLO then
-        local n=ensure_node(msg.uid, id); n.rednet_id=id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.last_seen=now_s()
-      elseif msg.type==PROTO.T.NODE_STATE then
-        local n=ensure_node(msg.uid, id); n.rednet_id=id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.state=tostring(msg.state or n.state or "-"); n.last_seen=now_s()
-      end
-    end
-  end
+local function on_telem(msg, from_id)
+  if type(msg) ~= "table" or type(msg.data) ~= "table" then return end
+  local d=msg.data; local n=ensure_node(d.uid, from_id)
+  n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster
+  n.rpm=n0(d.rpm,n.rpm); n.power_mrf=n0(d.power_mrf,n.power_mrf); n.flow=n0(d.flow,n.flow); n.fuel_pct=tonumber(d.fuel_pct or n.fuel_pct); n.last_seen=now_s()
+end
+
+local function on_hello(msg, from_id)
+  local n=ensure_node(msg.uid, from_id); n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.last_seen=now_s()
+end
+
+local function on_state(msg, from_id)
+  local n=ensure_node(msg.uid, from_id); n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.state=tostring(msg.state or n.state or "-"); n.last_seen=now_s()
+end
+
+DISP:subscribe(PROTO.T.TELEM, on_telem)
+DISP:subscribe(PROTO.T.NODE_HELLO, on_hello)
+DISP:subscribe(PROTO.T.NODE_STATE, on_state)
+
+local function dispatcher_loop()
+  DISP:start()
 end
 
 local function compute_kpis()
@@ -80,7 +86,7 @@ local function build_gui()
   if not (GUI and MON) then return nil end
   local router=GUI.mkRouter({monitorName=peripheral.getName(MON)})
   local scr=GUI.mkScreen("ovw","System ▢ Overview")
-  TB = Topbar.create({title="System ▢ Overview", auth_token=CFG.auth_token, modem_side=CFG.modem_side, monitor_name=peripheral.getName(MON), window_s=300}); TB:mount(GUI,scr); TB:start_rx()
+  TB = Topbar.create({title="System ▢ Overview", auth_token=CFG.auth_token, modem_side=CFG.modem_side, monitor_name=peripheral.getName(MON), window_s=300}); TB:mount(GUI,scr); TB:attach_dispatcher(DISP)
 
   local kpiA=GUI.mkLabel(2,3,"Power: - RF/t",{color=colors.green}); scr:add(kpiA)
   local kpiB=GUI.mkLabel(26,3,"Ø RPM: -",{color=colors.lightBlue}); scr:add(kpiB)
@@ -162,4 +168,4 @@ end
 
 print("System Overview ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
 bcast(PROTO.make_hello(IDENT))
-parallel.waitForAny(rx_loop, gui_loop, tui_loop)
+parallel.waitForAny(dispatcher_loop, gui_loop, tui_loop)

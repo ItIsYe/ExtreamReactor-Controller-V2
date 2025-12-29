@@ -46,27 +46,26 @@ function M.create(opts)
     if self.show_net    then local nx,ny = pos_right_net();    self._labels.net   = GUI.mkLabel(nx,ny, "[NET:--]",  {color=colors.red}); screen:add(self._labels.net) end
   end
 
-  function tb:start_rx()
-    if self._rx_running then return end
+  function tb:attach_dispatcher(dispatcher)
+    if self._rx_running or type(dispatcher) ~= "table" or type(dispatcher.subscribe) ~= "function" then return end
     self._rx_running=true
-    parallel.waitForAll(function()
-      while self._rx_running do
-        local from,msg = rednet.receive(0.2)
-        if from and type(msg)=="table" and msg._auth==self.auth_token then
-          local ts = now_s()
-          if msg.type=="ALARM" then
-            table.insert(self._alarm.list, {ts=ts, level=string.upper(tostring(msg.level or "INFO"))})
-            local keep={}; for _,a in ipairs(self._alarm.list) do if (ts-a.ts)<=self.window_s then table.insert(keep,a) end end
-            self._alarm.list=keep
-          end
-          if msg.type=="TELEM" or msg.type=="NODE_HELLO" then
-            local uid = (msg.data and msg.data.uid) or msg.uid or ("id:"..tostring(from))
-            self._nodes.by_uid[tostring(uid)] = ts
-            self._nodes.last_any = ts
-          end
-        end
-      end
+
+    dispatcher:subscribe("ALARM", function(msg)
+      local ts = now_s()
+      table.insert(self._alarm.list, {ts=ts, level=string.upper(tostring(msg.level or "INFO"))})
+      local keep={}; for _,a in ipairs(self._alarm.list) do if (ts-a.ts)<=self.window_s then table.insert(keep,a) end end
+      self._alarm.list=keep
     end)
+
+    local function mark_node(msg)
+      local ts = now_s()
+      local uid = (msg.data and msg.data.uid) or msg.uid or "id:?"
+      self._nodes.by_uid[tostring(uid)] = ts
+      self._nodes.last_any = ts
+    end
+
+    dispatcher:subscribe("TELEM", mark_node)
+    dispatcher:subscribe("NODE_HELLO", mark_node)
   end
 
   local function compute_badge(tb)

@@ -15,11 +15,10 @@ local CFG=(function()
   return t
 end)()
 
-assert(peripheral.getType(CFG.modem_side)=="modem","Kein Modem an "..tostring(CFG.modem_side))
-if not rednet.isOpen(CFG.modem_side) then rednet.open(CFG.modem_side) end
+local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
+local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side})
 
-local function tagged(msg) msg._auth=CFG.auth_token; return msg end
-local function bcast(msg) rednet.broadcast(tagged(msg)) end
+local function bcast(msg) return DISP:publish(msg) end
 
 -- GUI-Toolkit laden
 local GUI; do
@@ -54,6 +53,10 @@ local function open_fuel_panel()   shell.run("/xreactor/master/fuel_panel.lua") 
 local function open_waste_panel()  shell.run("/xreactor/master/waste_panel.lua")  end
 local function open_overview()     shell.run("/xreactor/master/overview_panel.lua") end
 
+local function dispatcher_loop()
+  DISP:start()
+end
+
 -- GUI
 local function build_gui()
   if not (GUI and MON) then return nil end
@@ -61,7 +64,7 @@ local function build_gui()
   local scr=GUI.mkScreen("home","XReactor ▢ Master")
 
   TB = Topbar.create({title="XReactor ▢ Master", auth_token=CFG.auth_token, modem_side=CFG.modem_side, monitor_name=peripheral.getName(MON), window_s=300, show_clock=true, show_net=true, show_alarm=true, show_health=true})
-  TB:mount(GUI, scr); TB:start_rx()
+  TB:mount(GUI, scr); TB:attach_dispatcher(DISP)
 
   local btnFuel  = GUI.mkButton(4,4,22,7,"Fuel ▢ Manager",  open_fuel_panel, colors.green);  scr:add(btnFuel)
   local btnWaste = GUI.mkButton(30,4,22,7,"Waste ▢ Panel",  open_waste_panel, colors.orange); scr:add(btnWaste)
@@ -105,4 +108,4 @@ end
 
 print("Master-Startoberfläche ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
 bcast({type="HELLO"})
-parallel.waitForAny(gui_loop, tui_loop)
+parallel.waitForAny(dispatcher_loop, gui_loop, tui_loop)
