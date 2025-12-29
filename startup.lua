@@ -47,25 +47,36 @@ end
 local function loadIdentity()
   local ok, cfg = pcall(function() return require("xreactor.config_identity") end)
   if not ok or type(cfg) ~= "table" then
-    log("Hinweis: /xreactor/config_identity.lua fehlt → nutze AUX-Defaults")
-    return { role = "AUX", id = "01", hostname = "", cluster = "XR-CLUSTER-DEFAULT", token = "xreactor" }
+    log("Hinweis: /xreactor/config_identity.lua fehlt → nutze REACTOR-Defaults")
+    return { role = "REACTOR", id = "01", hostname = "", cluster = "XR-CLUSTER-DEFAULT", token = "xreactor" }
   end
   return cfg
 end
 
-local function startAUX()
-  log("Starte AUX-Node (Fallback)…")
-  local ok, mod = pcall(function() return require("xreactor.node.aux_node") end)
+local NODE_MODULES = {
+  REACTOR   = "xreactor.node.reactor_node",
+  ENERGY    = "xreactor.node.energy_node",
+  FUEL      = "xreactor.node.fuel_node",
+  REPROCESS = "xreactor.node.reprocessing_node",
+}
+
+local function startNode(role)
+  local key = (role or "REACTOR"):upper()
+  local mod_path = NODE_MODULES[key] or NODE_MODULES.REACTOR
+  log(("Starte %s-Node (%s)…"):format(key, mod_path))
+
+  local ok, mod = pcall(function() return require(mod_path) end)
   if not ok or not mod then
-    log("FEHLER: AUX-Node nicht ladbar: "..tostring(mod or ok))
+    log("FEHLER: Node nicht ladbar: "..tostring(mod or ok))
     return
   end
+
   if type(mod.run) == "function" then
     local ok2, err = pcall(mod.run)
-    if not ok2 then log("AUX-Node Fehler: "..tostring(err)) end
+    if not ok2 then log("Node Fehler: "..tostring(err)) end
   else
     local ok2, err = pcall(mod)
-    if not ok2 then log("AUX-Node Fehler: "..tostring(err)) end
+    if not ok2 then log("Node Fehler: "..tostring(err)) end
   end
 end
 
@@ -98,11 +109,11 @@ openAnyModem()
 local ident = loadIdentity()
 log(("Identität: role=%s id=%s cluster=%s"):format(ident.role or "?", ident.id or "?", ident.cluster or "?"))
 
-if (ident.role or "AUX"):upper() == "MASTER" then
+if (ident.role or "REACTOR"):upper() == "MASTER" then
   if not startMASTER() then
-    log("MASTER fehlgeschlagen – wechsle in AUX.")
-    startAUX()
+    log("MASTER fehlgeschlagen – wechsle in NODE.")
+    startNode(ident.role)
   end
 else
-  startAUX()
+  startNode(ident.role)
 end

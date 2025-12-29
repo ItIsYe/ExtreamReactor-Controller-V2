@@ -1,8 +1,8 @@
 --========================================================
--- ExtreamReactor-Controller-V2 — Manifest (AUTOSTART + AUX)
+-- ExtreamReactor-Controller-V2 — Manifest (AUTOSTART + Nodes)
 --========================================================
 return {
-  version    = "2025-10-31-5",
+  version    = "2025-10-31-6",
   created_at = "2025-10-31T00:00:00Z",
   base_url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main",
 
@@ -34,8 +34,7 @@ return {
     -- Universal Autostart
     { src = "startup.lua",                   dst = "/startup.lua" },
 
-    -- Node AUX (Platzhalter/Beispiel)
-    { src = "src/node/aux_node.lua",            dst = "/xreactor/node/aux_node.lua" },
+    -- Node Runtimes
     { src = "src/node/reactor_node.lua",        dst = "/xreactor/node/reactor_node.lua" },
     { src = "src/node/fuel_node.lua",           dst = "/xreactor/node/fuel_node.lua" },
     { src = "src/node/reprocessing_node.lua",   dst = "/xreactor/node/reprocessing_node.lua" },

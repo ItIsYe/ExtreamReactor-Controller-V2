@@ -19,21 +19,33 @@ local function monitor_present() local ok,mon=pcall(function() return peripheral
 
 -- ===== Rolle =====
 local function choose_role()
-  say("") say("[1] MASTER (UI)   [2] AUX (Worker/Textmodus)")
-  local sel=ask("Auswahl 1/2","2")
-  if tostring(sel)=="1" or tostring(sel):lower()=="master" then return "MASTER","master" end
-  return "AUX","node"
+  say("")
+  say("[1] MASTER (UI)   [2] REACTOR   [3] ENERGY   [4] FUEL   [5] REPROCESS")
+  local sel=ask("Auswahl 1-5","2")
+  local val=tostring(sel):lower()
+  if val=="1" or val=="master" then return "MASTER","master" end
+  if val=="3" or val=="energy" then return "ENERGY","energy" end
+  if val=="4" or val=="fuel" then return "FUEL","fuel" end
+  if val=="5" or val=="reprocess" or val=="reprocessing" then return "REPROCESS","reprocess" end
+  return "REACTOR","reactor"
 end
 
 -- ===== Manifeste =====
--- Basis inkl. AUX-Node (für sicheren Fallback)  +++  topbar.lua NEU dabei +++
+-- Basis inkl. Node-Runtime + Topbar
 local BASE = {
-  {"src/shared/protocol.lua","/xreactor/shared/protocol.lua"},
-  {"src/shared/identity.lua","/xreactor/shared/identity.lua"},
-  {"src/shared/log.lua",     "/xreactor/shared/log.lua"},
-  {"src/shared/topbar.lua",  "/xreactor/shared/topbar.lua"},   -- <<<
-  {"src/node/aux_node.lua",  "/xreactor/node/aux_node.lua"},
-  {"startup.lua",            "/startup.lua"},
+  {"src/shared/protocol.lua",          "/xreactor/shared/protocol.lua"},
+  {"src/shared/identity.lua",          "/xreactor/shared/identity.lua"},
+  {"src/shared/log.lua",               "/xreactor/shared/log.lua"},
+  {"src/shared/topbar.lua",            "/xreactor/shared/topbar.lua"},
+  {"src/shared/network_dispatcher.lua","/xreactor/shared/network_dispatcher.lua"},
+  {"src/shared/node_state_machine.lua", "/xreactor/shared/node_state_machine.lua"},
+  {"src/shared/node_runtime.lua",      "/xreactor/shared/node_runtime.lua"},
+  {"src/node/node_core.lua",           "/xreactor/node/node_core.lua"},
+  {"src/node/reactor_node.lua",        "/xreactor/node/reactor_node.lua"},
+  {"src/node/energy_node.lua",         "/xreactor/node/energy_node.lua"},
+  {"src/node/fuel_node.lua",           "/xreactor/node/fuel_node.lua"},
+  {"src/node/reprocessing_node.lua",   "/xreactor/node/reprocessing_node.lua"},
+  {"startup.lua",                      "/startup.lua"},
 }
 -- MASTER-UI
 local MASTER = {
@@ -80,9 +92,27 @@ local function write_config_master()
   text_scale   = 0.5,
 }]])
 end
-local function write_launchers()
+local function write_launchers(role)
+  local map=[[
+local function choose()
+  local ok,cfg=pcall(function() return require("xreactor.config_identity") end)
+  local fallback="%s"
+  local role_val=(ok and cfg and cfg.role) or fallback
+  local upper=string.upper(tostring(role_val or "REACTOR"))
+  local paths={
+    MASTER      = "/xreactor/master/master_home.lua",
+    REACTOR     = "/xreactor/node/reactor_node.lua",
+    ENERGY      = "/xreactor/node/energy_node.lua",
+    FUEL        = "/xreactor/node/fuel_node.lua",
+    REPROCESS   = "/xreactor/node/reprocessing_node.lua",
+  }
+  return paths[upper] or paths.REACTOR
+end
+local target=choose()
+shell.run(target)
+]]
   save_text("/xreactor/master",'shell.run("/xreactor/master/master_home.lua")')
-  save_text("/xreactor/node",  'shell.run("/xreactor/node/aux_node.lua")')
+  save_text("/xreactor/node",  string.format(map, role or "REACTOR"))
   say("Launcher angelegt/aktualisiert: /xreactor/master und /xreactor/node")
 end
 local function write_role_txt(role_lower)
@@ -132,7 +162,7 @@ return M
 end
 
 -- ===== Health-Check =====
-local function write_health_check()
+local function write_health_check(role)
   local hc=[[
 -- /xreactor/health_check.lua
 local function ok(b) return b and "OK" or "FAIL" end
@@ -140,9 +170,9 @@ local function exists(p) return fs.exists(p) and not fs.isDir(p) end
 print("== XReactor Health-Check ==")
 local role="unknown" if fs.exists("/xreactor/role.txt") then local f=fs.open("/xreactor/role.txt","r") role=(f.readLine() or "unknown") f.close() end
 print("role.txt:",role)
-local aux="/xreactor/node/aux_node.lua"
-print("AUX-Datei vorhanden:", ok(exists(aux)))
-if exists(aux) then local lf=loadfile(aux) print("AUX-Datei ladbar:", ok(type(lf)=="function")) end
+local node=[[ROLEPATH]]
+print("Node-Datei vorhanden:", ok(exists(node)))
+if exists(node) then local lf=loadfile(node) print("Node-Datei ladbar:", ok(type(lf)=="function")) end
 local mh="/xreactor/master/master_home.lua"
 print("MASTER-Hauptskript:", ok(exists(mh)))
 local gui="/xreactor/shared/gui.lua"
@@ -155,7 +185,15 @@ print("Mind. ein Modem:", ok(hasModem))
 local mon=peripheral.find("monitor"); print("Monitor gefunden:", ok(mon~=nil))
 print("== Ende. Wenn alles OK: reboot ==")
 ]]
-  save_text("/xreactor/health_check.lua",hc)
+  local paths={
+    MASTER      = "/xreactor/master/master_home.lua",
+    REACTOR     = "/xreactor/node/reactor_node.lua",
+    ENERGY      = "/xreactor/node/energy_node.lua",
+    FUEL        = "/xreactor/node/fuel_node.lua",
+    REPROCESS   = "/xreactor/node/reprocessing_node.lua",
+  }
+  local node_path=paths[(role or "REACTOR"):upper()] or paths.REACTOR
+  save_text("/xreactor/health_check.lua",hc:gsub("%[%[ROLEPATH%]%]", node_path))
 end
 
 -- ===== Main =====
@@ -181,14 +219,12 @@ local function run()
   if role=="MASTER" or auto_master then write_config_master() end
 
   -- Start-Dateien & Rolle
-  save_text("/xreactor/master",'shell.run("/xreactor/master/master_home.lua")')
-  save_text("/xreactor/node",  'shell.run("/xreactor/node/aux_node.lua")')
-  say("Launcher angelegt/aktualisiert: /xreactor/master und /xreactor/node")
   save_text("/xreactor/role.txt",role_lower.."\n"); say("role.txt gesetzt:",role_lower)
+  write_launchers(role)
 
   -- GUI-Kompatibilität absichern + Health-Check
   ensure_gui_mkrouter()
-  write_health_check()
+  write_health_check(role)
 
   say(""); say("✅ Installation fertig. Starte Health-Check …")
   local ok2,err2=pcall(function() dofile("/xreactor/health_check.lua") end)
