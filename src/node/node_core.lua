@@ -31,6 +31,42 @@ function Core.create(cfg)
   local control_fn   = cfg.control_loop or cfg.local_control
   local user_on_tick = cfg.on_tick
   local user_on_tgt  = cfg.on_target_update
+  local alarm_watchers = cfg.alarm_watchers or {}
+
+  local alarm_flags = {}
+
+  local function publish_alarm(severity, message, alarm_id, timestamp, details)
+    return runtime:publish_alarm(severity, message, alarm_id, timestamp, details)
+  end
+
+  local function alarm_once(key, severity, message, details)
+    if not key then return publish_alarm(severity, message, nil, nil, details) end
+    if alarm_flags[key] == severity then return end
+    alarm_flags[key] = severity
+    return publish_alarm(severity, message, nil, nil, details)
+  end
+
+  local function clear_alarm_flag(key)
+    alarm_flags[key] = nil
+  end
+
+  local function run_alarm_watchers(trigger, state_name, master_id)
+    for _,watcher in ipairs(alarm_watchers) do
+      if type(watcher) == 'function' then
+        pcall(watcher, {
+          trigger = trigger,
+          last_target = last_target,
+          runtime = runtime,
+          state = state_name,
+          master_id = master_id,
+          net_ok = runtime.is_network_ok and runtime:is_network_ok(),
+          publish_alarm = publish_alarm,
+          alarm_once = alarm_once,
+          clear_alarm_flag = clear_alarm_flag,
+        })
+      end
+    end
+  end
 
   local function merge_target(msg)
     if type(msg) ~= 'table' then return end
@@ -48,6 +84,7 @@ function Core.create(cfg)
     if type(user_on_tgt) == 'function' then
       pcall(user_on_tgt, runtime, msg, from, last_target, runtime.is_network_ok and runtime:is_network_ok())
     end
+    run_alarm_watchers('target', runtime:get_state_machine():get_state(), runtime:get_master_id())
   end
 
   cfg.on_tick = function(runtime, state, master_id)
@@ -57,6 +94,7 @@ function Core.create(cfg)
     if type(user_on_tick) == 'function' then
       pcall(user_on_tick, runtime, state, master_id, last_target, runtime.is_network_ok and runtime:is_network_ok())
     end
+    run_alarm_watchers('tick', state, master_id)
   end
 
   local runtime = Runtime.create(cfg)
@@ -87,8 +125,8 @@ function Core.create(cfg)
     return runtime:publish_telem(data_tbl)
   end
 
-  function self:publish_alarm(level, code, text, uid)
-    return runtime:publish_alarm(level, code, text, uid)
+  function self:publish_alarm(severity, message, alarm_id, timestamp, details)
+    return runtime:publish_alarm(severity, message, alarm_id, timestamp, details)
   end
 
   -- Liefert die letzte bekannte Zielvorgabe/Policy, bleibt aktiv bis überschrieben

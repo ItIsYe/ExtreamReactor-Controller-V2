@@ -24,6 +24,7 @@ local Model = dofile("/xreactor/master/master_model.lua")
 local FuelPanel = dofile("/xreactor/master/fuel_panel.lua")
 local WastePanel = dofile("/xreactor/master/waste_panel.lua")
 local OverviewPanel = dofile("/xreactor/master/overview_panel.lua")
+local AlarmPanel = dofile("/xreactor/master/alarm_panel.lua")
 local CORE = MasterCore.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side, dispatcher=_G.XREACTOR_SHARED_DISPATCHER})
 local MODEL = Model.create(CORE:get_dispatcher())
 local TOPBAR_CFG = { window_s = 300, health = { timeout_s = 10, warn_s = 20, crit_s = 60, min_nodes = 1 } }
@@ -119,12 +120,17 @@ local function start_panels()
   local home_panel = create_home_panel()
   local fuel_panel = FuelPanel.create({monitor=pick_monitor_for_role("fuel_manager")})
   local waste_panel = WastePanel.create({monitor=pick_monitor_for_role("waste_service")})
+  local alarm_panel = AlarmPanel.create({
+    monitor=pick_monitor_for_role("alarm_center"),
+    on_home = function() shell.run("/xreactor/master/master_home.lua") end,
+    on_ack = function() MODEL:ack_alarms() end,
+  })
   local overview_panel = OverviewPanel.create({
     monitor=pick_monitor_for_role("system_overview"),
     on_filter_change = function(k,v) MODEL:set_overview_filter(k,v) end,
     on_refresh = function() CORE:publish(PROTO.make_hello(IDENT)) end,
   })
-  local panels = { home_panel, fuel_panel, waste_panel, overview_panel }
+  local panels = { home_panel, fuel_panel, waste_panel, alarm_panel, overview_panel }
 
   local function topbar_view()
     return MODEL:get_topbar_view(TOPBAR_CFG)
@@ -138,22 +144,27 @@ local function start_panels()
     waste_panel.set_view({ rows = MODEL:get_waste_rows(), topbar = topbar_view() })
   end
 
+  local function refresh_alarm()
+    alarm_panel.set_view({ alarm = MODEL:get_alarm_view(), topbar = topbar_view() })
+  end
+
   local function refresh_overview()
     overview_panel.set_view({ overview = MODEL:get_overview_view(), topbar = topbar_view() })
   end
 
   MODEL:subscribe('fuel', refresh_fuel)
   MODEL:subscribe('waste', refresh_waste)
+  MODEL:subscribe('alarm', refresh_alarm)
   MODEL:subscribe('overview', refresh_overview)
   MODEL:subscribe('topbar', function()
-    refresh_fuel(); refresh_waste(); refresh_overview()
+    refresh_fuel(); refresh_waste(); refresh_alarm(); refresh_overview()
   end)
 
   CORE:start_timers()
   bcast({type="HELLO"})
 
   for _,p in ipairs(panels) do if p and p.start then p.start() end end
-  refresh_fuel(); refresh_waste(); refresh_overview()
+  refresh_fuel(); refresh_waste(); refresh_alarm(); refresh_overview()
 
   local ui_tick = os.startTimer(1)
 
@@ -162,6 +173,7 @@ local function start_panels()
     CORE:handle_event(ev)
     if ev[1]=='timer' and ev[2]==ui_tick then
       refresh_fuel(); refresh_waste(); refresh_overview()
+      refresh_alarm()
       ui_tick=os.startTimer(1)
     end
     for _,p in ipairs(panels) do if p and p.handle_event then p.handle_event(ev) end end

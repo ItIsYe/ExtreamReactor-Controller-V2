@@ -22,8 +22,12 @@ while true do
     rpm[i]=math.max(0,rpm[i]+math.random(-5,5)); pwr[i]=math.max(0,pwr[i]+math.random(-500,500)); flow[i]=math.max(0,flow[i]+math.random(-5,5)); fuel[i]=math.max(0,math.min(100,fuel[i]+(math.random()<0.3 and -1 or 0)))
     bcast({type=PROTO.T.TELEM, data={uid=u, rpm=rpm[i], power_mrf=pwr[i], flow=flow[i], fuel_pct=fuel[i]}, hostname="SIM-"..u, role="REACTOR", cluster="SIM"})
   end
-  if math.random()<0.1 then local u=uid_list[math.random(#uid_list)]; bcast(PROTO.make_alarm("WARN","RPM_JITTER","Schwankende Drehzahl","sim-node",u)) end
-  if math.random()<0.05 then local u=uid_list[math.random(#uid_list)]; bcast(PROTO.make_alarm("CRIT","LOW_FUEL","Fuel niedrig","sim-node",u)) end
+  if math.random()<0.1 then
+    bcast(PROTO.make_alarm({ severity = "WARN", message = "Schwankende Drehzahl", source_node_id = "sim-node" }))
+  end
+  if math.random()<0.05 then
+    bcast(PROTO.make_alarm({ severity = "CRITICAL", message = "Fuel niedrig", source_node_id = "sim-node" }))
+  end
   sleep(0.7)
 end
 

@@ -4,7 +4,7 @@
 --========================================================
 local P = {}
 
-P.PROTO_VERSION = "1.1.0"                     -- Version der Draht-Protokoll-Struktur
+P.PROTO_VERSION = "1.2.0"                     -- Version der Draht-Protokoll-Struktur
 P.AUTH_TOKEN_DEFAULT = "xreactor"             -- Standard-Token (via config überschreibbar)
 
 P.T = {
@@ -87,9 +87,54 @@ function P.make_master_election(ident, data_tbl)
   return P.attach_identity({ type=P.T.MASTER_ELECTION, data=data_tbl or {} }, ident)
 end
 
+local function normalize_severity(raw)
+  local s = tostring(raw or "INFO"):upper()
+  if s == "CRIT" then return "CRITICAL" end
+  if s == "WARNING" then return "WARN" end
+  if s ~= "WARN" and s ~= "CRITICAL" then return "INFO" end
+  return s
+end
+
+local function make_alarm_id(source, ts)
+  source = tostring(source or "node")
+  ts = tonumber(ts) or os.epoch('utc')
+  return string.format("ALARM-%s-%d-%04d", source, ts, math.random(0,9999))
+end
+
 -- Alarm-Helfer
-function P.make_alarm(level, code, text, node, uid)
-  return { type=P.T.ALARM, level=string.upper(level or "INFO"), code=tostring(code or "?"), msg=text or "", node=node, uid=uid }
+-- Alarme sind passive Signale und dürfen keine direkten Steueraktionen auslösen.
+-- Sie tragen immer eine eindeutige ID, Quell-Node, Schweregrad und Zeitstempel.
+function P.make_alarm(arg1, message, source_node_id, alarm_id, timestamp)
+  local opts = {}
+  if type(arg1) == 'table' then
+    for k,v in pairs(arg1) do opts[k]=v end
+  else
+    opts.severity = arg1
+    opts.message = message
+    opts.source_node_id = source_node_id
+    opts.alarm_id = alarm_id
+    opts.timestamp = timestamp
+  end
+
+  local ts = tonumber(opts.timestamp or opts.ts) or os.epoch('utc')
+  local src = opts.source_node_id or opts.node or opts.source or opts.uid or "-"
+  local alarm_uid = opts.alarm_id or opts.uid or make_alarm_id(src, ts)
+  local severity = normalize_severity(opts.severity or opts.level)
+  local msg = tostring(opts.message or opts.msg or opts.text or opts.code or "")
+
+  local alarm = {
+    type = P.T.ALARM,
+    alarm_id = alarm_uid,
+    source_node_id = src,
+    severity = severity,
+    message = msg,
+    timestamp = ts,
+  }
+
+  if opts.code then alarm.code = tostring(opts.code) end
+  if opts.details and type(opts.details) == 'table' then alarm.details = opts.details end
+
+  return alarm
 end
 
 return P
