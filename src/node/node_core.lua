@@ -55,6 +55,10 @@ function Core.create(cfg)
     return runtime:start()
   end
 
+  function self:stop()
+    if runtime.stop then runtime:stop() end
+  end
+
   return self
 end
 

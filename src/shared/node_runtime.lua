@@ -157,6 +157,7 @@ function Runtime.create(opts)
   end)
 
   local timers = {}
+  local running = true
   local function reset_timer(key, interval)
     timers[key] = os.startTimer(interval)
   end
@@ -181,7 +182,7 @@ function Runtime.create(opts)
     reset_timer('hb', HB_INTERVAL)
     reset_timer('tick', TICK_INTERVAL)
 
-    while true do
+    while running do
       local ev = {os.pullEvent()}
       if ev[1]=='timer' then handle_timer(ev[2])
       elseif ev[1]=='node_state_change' then
@@ -191,13 +192,19 @@ function Runtime.create(opts)
         if new=='LOST_MASTER' then start_election() end
         if new=='AUTO' or new=='MASTER' then reset_election() end
       elseif ev[1]=='terminate' then
-        dispatcher:stop(); return
+        dispatcher:stop(); running=false; return
       end
     end
   end
 
   function self:start()
     parallel.waitForAny(function() dispatcher:start() end, event_loop)
+  end
+
+  function self:stop()
+    running=false
+    dispatcher:stop()
+    os.queueEvent('terminate')
   end
 
   return self
