@@ -75,6 +75,10 @@ function Core.create(cfg)
     return runtime:get_master_id()
   end
 
+  function self:get_dispatcher()
+    if runtime.get_dispatcher then return runtime:get_dispatcher() end
+  end
+
   function self:is_master_candidate()
     return runtime:is_master_candidate()
   end

@@ -103,6 +103,7 @@ local ident = dofile('/xreactor/shared/identity.lua').load_identity()
 log(("Identität: role=%s id=%s cluster=%s"):format(ident.role or "?", ident.id or "?", ident.cluster or "?"))
 
 local node = start_node_runtime(ident)
+_G.XREACTOR_SHARED_DISPATCHER = nil
 
 local function run_runtime()
   node:start()
@@ -113,7 +114,7 @@ local function handle_startup()
   decided_role = await_election(node, ident)
   if decided_role == "MASTER" then
     log("Election gewonnen – starte MASTER-UI")
-    node:stop()
+    _G.XREACTOR_SHARED_DISPATCHER = node:get_dispatcher()
     startMASTER()
   else
     log(("Node aktiv als %s (Master=%s)"):format(decided_role or ident.role, tostring(node:get_master_id() or "?")))

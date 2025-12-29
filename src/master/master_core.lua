@@ -26,7 +26,8 @@ function M.create(opts)
   end
 
   local self = { IDENT = ident }
-  local dispatcher = Dispatcher.create({ auth_token = ident.token, modem_side = cfg.modem_side, identity = ident })
+  local dispatcher = cfg.dispatcher or Dispatcher.create({ auth_token = ident.token, modem_side = cfg.modem_side, identity = ident })
+  local owns_dispatcher = cfg.dispatcher == nil
   local state = NodeState.create({
     master_timeout_s = cfg.master_timeout_s or 10,
     on_change = function(old, new, reason)
@@ -178,11 +179,11 @@ function M.create(opts)
   end
 
   function self:start_dispatcher()
-    dispatcher:start()
+    if owns_dispatcher then dispatcher:start() end
   end
 
   function self:stop()
-    dispatcher:stop()
+    if owns_dispatcher then dispatcher:stop() end
   end
 
   return self

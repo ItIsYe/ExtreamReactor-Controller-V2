@@ -16,7 +16,7 @@ local CFG=(function()
 end)()
 
 local MasterCore = dofile("/xreactor/master/master_core.lua")
-local CORE = MasterCore.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side})
+local CORE = MasterCore.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side, dispatcher=_G.XREACTOR_SHARED_DISPATCHER})
 
 local function bcast(msg) return CORE:publish(msg) end
 
