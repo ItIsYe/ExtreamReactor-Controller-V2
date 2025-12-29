@@ -22,6 +22,43 @@ function Core.create(cfg)
     end
   end
 
+  -- Lokale Zielvorgaben/Policies, die auch ohne Netzwerk weiter gelten
+  local last_target = {}
+  if type(cfg.default_target) == 'table' then
+    for k,v in pairs(cfg.default_target) do last_target[k] = v end
+  end
+
+  local control_fn   = cfg.control_loop or cfg.local_control
+  local user_on_tick = cfg.on_tick
+  local user_on_tgt  = cfg.on_target_update
+
+  local function merge_target(msg)
+    if type(msg) ~= 'table' then return end
+    local data = msg.data or msg.target or msg
+    if type(data) ~= 'table' then return end
+    for k,v in pairs(data) do last_target[k] = v end
+  end
+
+  -- Halte die letzte Zielvorgabe aktiv und triggere lokale Regelung auch ohne Netzwerk
+  cfg.on_target_update = function(runtime, msg, from)
+    merge_target(msg)
+    if type(control_fn) == 'function' then
+      pcall(control_fn, last_target, runtime, runtime:get_state_machine():get_state(), runtime:get_master_id(), 'target', from)
+    end
+    if type(user_on_tgt) == 'function' then
+      pcall(user_on_tgt, runtime, msg, from, last_target)
+    end
+  end
+
+  cfg.on_tick = function(runtime, state, master_id)
+    if type(control_fn) == 'function' then
+      pcall(control_fn, last_target, runtime, state, master_id, 'tick')
+    end
+    if type(user_on_tick) == 'function' then
+      pcall(user_on_tick, runtime, state, master_id, last_target)
+    end
+  end
+
   local runtime = Runtime.create(cfg)
   local state   = runtime:get_state_machine()
 
@@ -48,6 +85,11 @@ function Core.create(cfg)
 
   function self:publish_alarm(level, code, text, uid)
     return runtime:publish_alarm(level, code, text, uid)
+  end
+
+  -- Liefert die letzte bekannte Zielvorgabe/Policy, bleibt aktiv bis überschrieben
+  function self:get_last_target()
+    return last_target
   end
 
   -- Startet Dispatcher + Eventloop (Heartbeat/HELLO/Timeout/Wahl inklusive)
