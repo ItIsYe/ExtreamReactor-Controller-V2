@@ -25,10 +25,18 @@ local TB
 
 -- Zustand
 local TELEM = {} -- uid -> {fuel_pct, rpm, power_mrf, last_seen, hostname}
+local redraw_pending=false
+local function request_redraw(reason)
+  if not (GUI and MON) then return end
+  if redraw_pending then return end
+  redraw_pending=true
+  os.queueEvent("ui_redraw", reason or "update")
+end
 
 local function on_telem(msg, from_id)
   if type(msg) ~= "table" or type(msg.data) ~= "table" then return end
   local d=msg.data; TELEM[d.uid or ("id:"..tostring(from_id))] = { fuel_pct=d.fuel_pct, rpm=d.rpm, power_mrf=d.power_mrf, last_seen=os.epoch("utc")/1000, hostname=msg.hostname }
+  request_redraw("telem")
 end
 
 -- GUI
@@ -78,7 +86,25 @@ local function tui_loop()
   end
 end
 
-local function gui_loop() if not (GUI and MON) then return end; local router,scr=build_gui(); while true do if scr and scr._redraw then scr._redraw() end; router:draw(); sleep(0.05) end end
+local function gui_loop()
+  if not (GUI and MON) then return end
+  local router,scr=build_gui()
+
+  request_redraw("init")
+  local tick=os.startTimer(1)
+  while true do
+    local ev={os.pullEvent()}
+    if ev[1]=="timer" and ev[2]==tick then
+      request_redraw("tick"); tick=os.startTimer(1)
+    elseif ev[1]=="monitor_touch" or ev[1]=="mouse_click" or ev[1]=="mouse_drag" or ev[1]=="term_resize" then
+      request_redraw(ev[1])
+    elseif ev[1]=="ui_redraw" then
+      redraw_pending=false
+      if scr and scr._redraw then scr._redraw() end
+      if router and router.draw then router:draw() end
+    end
+  end
+end
 
 print("Fuel Panel ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
 parallel.waitForAny(dispatcher_loop, gui_loop, tui_loop)

@@ -22,11 +22,19 @@ local Topbar = dofile("/xreactor/shared/topbar.lua")
 local TB
 
 local ALARMS = {} -- { {ts, level, code, msg, node, uid}, ... }
+local redraw_pending=false
+local function request_redraw(reason)
+  if not (GUI and MON) then return end
+  if redraw_pending then return end
+  redraw_pending=true
+  os.queueEvent("ui_redraw", reason or "update")
+end
 local function push_alarm(a) table.insert(ALARMS, 1, a); if #ALARMS>100 then table.remove(ALARMS) end end
 
 local function on_alarm(msg)
   if type(msg) ~= "table" then return end
   push_alarm({ ts=os.date("%H:%M:%S"), level=string.upper(msg.level or "INFO"), code=msg.code or "?", msg=msg.msg or "", node=msg.node or "-", uid=msg.uid or "-" })
+  request_redraw("alarm")
 end
 
 DISP:subscribe("ALARM", on_alarm)
@@ -42,7 +50,7 @@ local function build_gui()
   TB = Topbar.create({title="Alarm ▢ Center", auth_token=CFG.auth_token, modem_side=CFG.modem_side, monitor_name=peripheral.getName(MON)}); TB:mount(GUI,scr); TB:attach_dispatcher(DISP)
 
   local lst=GUI.mkList(2,3,78,16,{}); scr:add(lst)
-  local btnAck = GUI.mkButton(2,20,12,3,"Quittieren", function() ALARMS={} end, colors.gray); scr:add(btnAck)
+  local btnAck = GUI.mkButton(2,20,12,3,"Quittieren", function() ALARMS={}; request_redraw("ack") end, colors.gray); scr:add(btnAck)
   local btnHome= GUI.mkButton(16,20,10,3,"Home", function() shell.run("/xreactor/master/master_home.lua") end, colors.lightGray); scr:add(btnHome)
 
   scr._redraw=function()
@@ -75,7 +83,25 @@ local function tui_loop()
   end
 end
 
-local function gui_loop() if not (GUI and MON) then return end; local router,scr=build_gui(); while true do if scr and scr._redraw then scr._redraw() end; router:draw(); sleep(0.05) end end
+local function gui_loop()
+  if not (GUI and MON) then return end
+  local router,scr=build_gui()
+
+  request_redraw("init")
+  local tick=os.startTimer(1)
+  while true do
+    local ev={os.pullEvent()}
+    if ev[1]=="timer" and ev[2]==tick then
+      request_redraw("tick"); tick=os.startTimer(1)
+    elseif ev[1]=="monitor_touch" or ev[1]=="mouse_click" or ev[1]=="mouse_drag" or ev[1]=="term_resize" then
+      request_redraw(ev[1])
+    elseif ev[1]=="ui_redraw" then
+      redraw_pending=false
+      if scr and scr._redraw then scr._redraw() end
+      if router and router.draw then router:draw() end
+    end
+  end
+end
 
 print("Alarm Center ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
 parallel.waitForAny(dispatcher_loop, gui_loop, tui_loop)

@@ -32,6 +32,13 @@ local Topbar = dofile("/xreactor/shared/topbar.lua")
 local TB; local function go_home() shell.run("/xreactor/master/master_home.lua") end
 
 local STATE = { nodes={}, sort_by="POWER", filter_online=true, filter_role="ALL" }
+local redraw_pending=false
+local function request_redraw(reason)
+  if not (GUI and MON) then return end
+  if redraw_pending then return end
+  redraw_pending=true
+  os.queueEvent("ui_redraw", reason or "update")
+end
 local function key_for(uid, id) if uid and tostring(uid)~="" then return tostring(uid) end; return "id:"..tostring(id or "?") end
 local function ensure_node(uid, id) local k=key_for(uid,id); local n=STATE.nodes[k]; if not n then n={ uid=uid or k, rednet_id=id or 0, hostname="-", role="-", cluster="-", rpm=0, power_mrf=0, flow=0, fuel_pct=nil, last_seen=0, state="-" } STATE.nodes[k]=n end; return n end
 
@@ -40,14 +47,17 @@ local function on_telem(msg, from_id)
   local d=msg.data; local n=ensure_node(d.uid, from_id)
   n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster
   n.rpm=n0(d.rpm,n.rpm); n.power_mrf=n0(d.power_mrf,n.power_mrf); n.flow=n0(d.flow,n.flow); n.fuel_pct=tonumber(d.fuel_pct or n.fuel_pct); n.last_seen=now_s()
+  request_redraw("telem")
 end
 
 local function on_hello(msg, from_id)
   local n=ensure_node(msg.uid, from_id); n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.last_seen=now_s()
+  request_redraw("hello")
 end
 
 local function on_state(msg, from_id)
   local n=ensure_node(msg.uid, from_id); n.rednet_id=from_id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.state=tostring(msg.state or n.state or "-"); n.last_seen=now_s()
+  request_redraw("state")
 end
 
 DISP:subscribe(PROTO.T.TELEM, on_telem)
@@ -163,7 +173,21 @@ end
 local function gui_loop()
   if not (GUI and MON) then return end
   local router,scr=build_gui()
-  while true do if scr and scr._redraw then scr._redraw() end; router:draw(); sleep(0.05) end
+
+  request_redraw("init")
+  local tick=os.startTimer(1)
+  while true do
+    local ev={os.pullEvent()}
+    if ev[1]=="timer" and ev[2]==tick then
+      request_redraw("tick"); tick=os.startTimer(1)
+    elseif ev[1]=="monitor_touch" or ev[1]=="mouse_click" or ev[1]=="mouse_drag" or ev[1]=="term_resize" then
+      request_redraw(ev[1])
+    elseif ev[1]=="ui_redraw" then
+      redraw_pending=false
+      if scr and scr._redraw then scr._redraw() end
+      if router and router.draw then router:draw() end
+    end
+  end
 end
 
 print("System Overview ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")

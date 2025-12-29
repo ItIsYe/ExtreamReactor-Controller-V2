@@ -46,6 +46,13 @@ if MON and not GUI then pcall(MON.setTextScale, 0.5) end
 
 local Topbar = dofile("/xreactor/shared/topbar.lua")
 local TB
+local redraw_pending=false
+local function request_redraw(reason)
+  if not (GUI and MON) then return end
+  if redraw_pending then return end
+  redraw_pending=true
+  os.queueEvent("ui_redraw", reason or "update")
+end
 
 -- Aktionen
 local function open_alarm_center() shell.run("/xreactor/master/alarm_center.lua") end
@@ -103,7 +110,20 @@ end
 local function gui_loop()
   if not (GUI and MON) then return end
   local router, scr = build_gui()
-  while true do if scr and scr._redraw then scr._redraw() end; router:draw(); sleep(0.05) end
+  request_redraw("init")
+  local tick=os.startTimer(1)
+  while true do
+    local ev={os.pullEvent()}
+    if ev[1]=="timer" and ev[2]==tick then
+      request_redraw("tick"); tick=os.startTimer(1)
+    elseif ev[1]=="monitor_touch" or ev[1]=="mouse_click" or ev[1]=="mouse_drag" or ev[1]=="term_resize" then
+      request_redraw(ev[1])
+    elseif ev[1]=="ui_redraw" then
+      redraw_pending=false
+      if scr and scr._redraw then scr._redraw() end
+      if router and router.draw then router:draw() end
+    end
+  end
 end
 
 print("Master-Startoberfläche ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
