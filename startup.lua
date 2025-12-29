@@ -44,31 +44,6 @@ local function openAnyModem()
   if not any then log("WARN: Kein Modem offen. (wired/wireless Modem anschließen & einschalten)") end
 end
 
-local function loadIdentity()
-  local ok, cfg = pcall(function() return require("xreactor.config_identity") end)
-  if not ok or type(cfg) ~= "table" then
-    log("Hinweis: /xreactor/config_identity.lua fehlt → nutze AUX-Defaults")
-    return { role = "AUX", id = "01", hostname = "", cluster = "XR-CLUSTER-DEFAULT", token = "xreactor" }
-  end
-  return cfg
-end
-
-local function startAUX()
-  log("Starte AUX-Node (Fallback)…")
-  local ok, mod = pcall(function() return require("xreactor.node.aux_node") end)
-  if not ok or not mod then
-    log("FEHLER: AUX-Node nicht ladbar: "..tostring(mod or ok))
-    return
-  end
-  if type(mod.run) == "function" then
-    local ok2, err = pcall(mod.run)
-    if not ok2 then log("AUX-Node Fehler: "..tostring(err)) end
-  else
-    local ok2, err = pcall(mod)
-    if not ok2 then log("AUX-Node Fehler: "..tostring(err)) end
-  end
-end
-
 local function startMASTER()
   log("Starte MASTER-UI…")
   -- Falls GUI fehlt, liefert unser Shim trotzdem ein GUI-Objekt (siehe gui.lua).
@@ -92,17 +67,79 @@ local function startMASTER()
   end
 end
 
+local function await_election(core, ident)
+  local desired = tostring(ident.role or "REACTOR"):upper()
+  if desired ~= "MASTER" and desired ~= "MASTER_CANDIDATE" then
+    return desired
+  end
+
+  local deadline = os.startTimer(15)
+  while true do
+    local ev = {os.pullEvent()}
+    if ev[1] == "node_state_change" then
+      local state = ev[3]
+      local master_id = core:get_master_id()
+      if state == "MASTER" and master_id == os.getComputerID() then
+        return "MASTER"
+      elseif master_id and master_id ~= os.getComputerID() then
+        return "SLAVE"
+      end
+    elseif ev[1] == "timer" and ev[2] == deadline then
+      return desired
+    end
+  end
+end
+
+local function start_node_runtime(ident)
+  local NodeCore = dofile('/xreactor/node/node_core.lua')
+  return NodeCore.create({ identity = ident })
+end
+
 term.setCursorBlink(false)
 log("XReactor Launcher gestartet.")
 openAnyModem()
-local ident = loadIdentity()
+
+local ident = dofile('/xreactor/shared/identity.lua').load_identity()
 log(("Identität: role=%s id=%s cluster=%s"):format(ident.role or "?", ident.id or "?", ident.cluster or "?"))
 
-if (ident.role or "AUX"):upper() == "MASTER" then
-  if not startMASTER() then
-    log("MASTER fehlgeschlagen – wechsle in AUX.")
-    startAUX()
-  end
-else
-  startAUX()
+local node = start_node_runtime(ident)
+local dispatcher = node:get_dispatcher()
+_G.XREACTOR_SHARED_DISPATCHER = nil
+
+local decided_role = nil
+
+local function run_dispatcher()
+  if dispatcher and dispatcher.start then dispatcher:start() end
 end
+
+local function run_node_core()
+  if dispatcher and dispatcher.is_running then
+    while not dispatcher:is_running() do sleep(0.05) end
+  end
+  if node.start_event_loop then
+    node:start_event_loop()
+  else
+    node:start()
+  end
+end
+
+local function handle_startup()
+  decided_role = await_election(node, ident)
+  if decided_role == "MASTER" then
+    log("Election gewonnen – starte MASTER-UI")
+    _G.XREACTOR_SHARED_DISPATCHER = dispatcher
+    startMASTER()
+  else
+    log(("Node aktiv als %s (Master=%s)"):format(decided_role or ident.role, tostring(node:get_master_id() or "?")))
+  end
+
+  while true do
+    local ev = {os.pullEvent()}
+    if ev[1] == "terminate" then
+      if node.stop then node:stop() end
+      return
+    end
+  end
+end
+
+parallel.waitForAll(run_dispatcher, run_node_core, handle_startup)

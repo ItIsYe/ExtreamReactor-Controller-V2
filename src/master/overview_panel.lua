@@ -2,11 +2,9 @@
 -- /xreactor/master/overview_panel.lua
 -- System Overview mit Identity (hostname/role/cluster), KPIs & Filtern
 --========================================================
-local function now_s() return os.epoch("utc")/1000 end
-local function n0(x,d) x=tonumber(x); if x==nil then return d or 0 end; return x end
-local function age_s(ts) local a=now_s()-(ts or 0); if a<0 then a=0 end; return math.floor(a) end
-
 local PROTO = dofile("/xreactor/shared/protocol.lua")
+local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
+local Model = dofile("/xreactor/master/master_model.lua")
 local IDMOD = dofile("/xreactor/shared/identity.lua")
 local IDENT  = IDMOD.load_identity()
 
@@ -18,9 +16,9 @@ local CFG=(function()
   return t
 end)()
 
-assert(peripheral.getType(CFG.modem_side)=="modem","Kein Modem an "..tostring(CFG.modem_side))
-if not rednet.isOpen(CFG.modem_side) then rednet.open(CFG.modem_side) end
-local function bcast(msg) msg=PROTO.tag(msg, CFG.auth_token); return rednet.broadcast(msg) end
+local DISP = Dispatcher.create({auth_token=CFG.auth_token, modem_side=CFG.modem_side, identity=IDENT})
+local MODEL = Model.create(DISP, { telem_timeout_s = CFG.telem_timeout_s })
+local function bcast(msg) return DISP:publish(msg) end
 
 local GUI; do local ok,g=pcall(require,"xreactor.shared.gui"); if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end end
 local function load_ui_map() if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end; return {monitors={}, autoscale={enabled=false}} end
@@ -29,27 +27,21 @@ local function pick_monitor_for_role(role) local name; for n,cfg in pairs(UIMAP.
 local MON=pick_monitor_for_role("system_overview"); if MON and not GUI then pcall(MON.setTextScale, 0.5) end
 
 local Topbar = dofile("/xreactor/shared/topbar.lua")
+local TOPBAR_CFG = { window_s = 300, health = { timeout_s = 10, warn_s = 20, crit_s = 60, min_nodes = 1 } }
 local TB; local function go_home() shell.run("/xreactor/master/master_home.lua") end
 
-local STATE = { nodes={}, sort_by="POWER", filter_online=true, filter_role="ALL" }
-local function key_for(uid, id) if uid and tostring(uid)~="" then return tostring(uid) end; return "id:"..tostring(id or "?") end
-local function ensure_node(uid, id) local k=key_for(uid,id); local n=STATE.nodes[k]; if not n then n={ uid=uid or k, rednet_id=id or 0, hostname="-", role="-", cluster="-", rpm=0, power_mrf=0, flow=0, fuel_pct=nil, last_seen=0, state="-" } STATE.nodes[k]=n end; return n end
+local redraw_pending=false
+local function request_redraw(reason)
+  if not (GUI and MON) then return end
+  if redraw_pending then return end
+  redraw_pending=true
+  os.queueEvent("ui_redraw", reason or "update")
+end
+MODEL:subscribe('overview', function() request_redraw('data') end)
+MODEL:subscribe('topbar', function() request_redraw('topbar') end)
 
-local function rx_loop()
-  while true do
-    local id,msg=rednet.receive(0.5)
-    if id and type(msg)=="table" and PROTO.is_auth(msg, CFG.auth_token) then
-      if msg.type==PROTO.T.TELEM and type(msg.data)=="table" then
-        local d=msg.data; local n=ensure_node(d.uid, id)
-        n.rednet_id=id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster
-        n.rpm=n0(d.rpm,n.rpm); n.power_mrf=n0(d.power_mrf,n.power_mrf); n.flow=n0(d.flow,n.flow); n.fuel_pct=tonumber(d.fuel_pct or n.fuel_pct); n.last_seen=now_s()
-      elseif msg.type==PROTO.T.NODE_HELLO then
-        local n=ensure_node(msg.uid, id); n.rednet_id=id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.last_seen=now_s()
-      elseif msg.type==PROTO.T.NODE_STATE then
-        local n=ensure_node(msg.uid, id); n.rednet_id=id; n.hostname=msg.hostname or n.hostname; n.role=(msg.role and tostring(msg.role):upper()) or n.role; n.cluster=msg.cluster or n.cluster; n.state=tostring(msg.state or n.state or "-"); n.last_seen=now_s()
-      end
-    end
-  end
+local function dispatcher_loop()
+  DISP:start()
 end
 
 local function compute_kpis()
@@ -80,7 +72,7 @@ local function build_gui()
   if not (GUI and MON) then return nil end
   local router=GUI.mkRouter({monitorName=peripheral.getName(MON)})
   local scr=GUI.mkScreen("ovw","System ▢ Overview")
-  TB = Topbar.create({title="System ▢ Overview", auth_token=CFG.auth_token, modem_side=CFG.modem_side, monitor_name=peripheral.getName(MON), window_s=300}); TB:mount(GUI,scr); TB:start_rx()
+  TB = Topbar.create({title="System ▢ Overview", monitor_name=peripheral.getName(MON), window_s=TOPBAR_CFG.window_s}); TB:mount(GUI,scr)
 
   local kpiA=GUI.mkLabel(2,3,"Power: - RF/t",{color=colors.green}); scr:add(kpiA)
   local kpiB=GUI.mkLabel(26,3,"Ø RPM: -",{color=colors.lightBlue}); scr:add(kpiB)
@@ -89,34 +81,20 @@ local function build_gui()
 
   local lst=GUI.mkList(2,5,78,14,{}); scr:add(lst)
 
-  local btnSort=GUI.mkSelector(2,20,18,{"POWER","RPM","HOST"},"POWER",function(v) STATE.sort_by=v end); scr:add(btnSort)
-  local btnFilt=GUI.mkSelector(22,20,14,{"ONLINE","ALLE"},"ONLINE",function(v) STATE.filter_online=(v=="ONLINE") end); scr:add(btnFilt)
-  local btnRole=GUI.mkSelector(38,20,18,{"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"},"ALL",function(v) STATE.filter_role=v end); scr:add(btnRole)
+  local btnSort=GUI.mkSelector(2,20,18,{"POWER","RPM","HOST"},"POWER",function(v) MODEL:set_overview_filter('sort_by', v) end); scr:add(btnSort)
+  local btnFilt=GUI.mkSelector(22,20,14,{"ONLINE","ALLE"},"ONLINE",function(v) MODEL:set_overview_filter('filter_online', v=="ONLINE") end); scr:add(btnFilt)
+  local btnRole=GUI.mkSelector(38,20,18,{"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"},"ALL",function(v) MODEL:set_overview_filter('filter_role', v) end); scr:add(btnRole)
   local btnRef =GUI.mkButton(58,20,10,3,"Refresh", function() bcast(PROTO.make_hello(IDENT)) end, colors.gray); scr:add(btnRef)
   local btnHome=GUI.mkButton(70,20,10,3,"Home",    function() go_home() end, colors.lightGray); scr:add(btnHome)
 
   scr._redraw=function()
-    local k=compute_kpis()
-    kpiA.props.text=("Power: %d RF/t"):format(math.floor(k.total_power+0.5))
-    kpiB.props.text=("Ø RPM: %d"):format(k.rpm_avg or 0)
-    kpiC.props.text=("Online: %d / %d"):format(k.online or 0, (k.online or 0)+(k.offline or 0))
-    kpiD.props.text=(k.fuel_min and k.fuel_max) and ("Fuel%%: %d .. %d"):format(k.fuel_min,k.fuel_max) or "Fuel%: n/a"
-
-    local rows={}
-    local arr=nodes_sorted()
-    if #arr==0 then rows={{text="(Noch keine TELEM gesehen – Refresh oder kurz warten)", color=colors.gray}}
-    else
-      for _,n in ipairs(arr) do
-        local age=age_s(n.last_seen or 0); local online = age <= (CFG.telem_timeout_s or 10)
-        local fuel = n.fuel_pct and (tostring(n.fuel_pct).."%") or "n/a"
-        local line=string.format("%-16s %-7s %-8s  P:%-6d RPM:%-5d Flow:%-5d Fuel:%-4s  %2ss  %s",
-          tostring(n.hostname or "-"), tostring(n.role or "-"), tostring(n.cluster or "-"),
-          n0(n.power_mrf), n0(n.rpm), n0(n.flow), fuel, age, tostring(n.state or "-"))
-        table.insert(rows, {text=line, color=online and colors.white or colors.lightGray})
-      end
-    end
-    lst.props.items=rows
-    TB:update()
+    local v = MODEL:get_overview_view()
+    kpiA.props.text = v.kpi_power_text
+    kpiB.props.text = v.kpi_rpm_text
+    kpiC.props.text = v.kpi_online_text
+    kpiD.props.text = v.kpi_fuel_text
+    lst.props.items = v.rows
+    TB:update(MODEL:get_topbar_view(TOPBAR_CFG))
   end
 
   router:register(scr); router:show("ovw")
@@ -128,19 +106,13 @@ local function tui_loop()
   local function bhello() bcast(PROTO.make_hello(IDENT)) end
   while true do
     term.clear(); term.setCursorPos(1,1)
-    local k=compute_kpis()
+    local v = MODEL:get_overview_view()
     print("System ▢ Overview (TUI)  "..os.date("%H:%M:%S"))
     print(string.rep("-",78))
-    local fuel = (k.fuel_min and k.fuel_max) and (tostring(k.fuel_min)..".."..tostring(k.fuel_max)) or "n/a"
-    print(("Power: %d RF/t   ØRPM: %d   Online: %d/%d   Fuel%%: %s   RoleFilter: %s"):format(
-      math.floor(k.total_power+0.5), k.rpm_avg, k.online or 0, (k.online or 0)+(k.offline or 0), fuel, STATE.filter_role))
+    print(string.format("%s   %s   %s   %s", v.kpi_power_text, v.kpi_rpm_text, v.kpi_online_text, v.kpi_fuel_text))
     print(string.rep("-",78))
-    for _,n in ipairs(nodes_sorted()) do
-      local age=age_s(n.last_seen or 0); local online=age <= (CFG.telem_timeout_s or 10)
-      local f = n.fuel_pct and (tostring(n.fuel_pct).."%") or "n/a"
-      print(string.format("%-16s %-7s %-8s  P:%-6d RPM:%-5d Flow:%-5d Fuel:%-4s  %2ss  %s %s",
-        tostring(n.hostname or "-"), tostring(n.role or "-"), tostring(n.cluster or "-"),
-        n0(n.power_mrf), n0(n.rpm), n0(n.flow), f, age, tostring(n.state or "-"), online and "" or "(OFF)"))
+    for _,row in ipairs(v.rows) do
+      print(row.text)
     end
     print(string.rep("-",78))
     print("[S] POWER/RPM/HOST  [F] ONLINE/ALLE  [L] Role-Filter  [R] Refresh  [H] Home  [Q] Quit")
@@ -148,18 +120,35 @@ local function tui_loop()
     if kb==keys.q then return
     elseif kb==keys.r then bhello()
     elseif kb==keys.h then go_home()
-    elseif kb==keys.s then STATE.sort_by = (STATE.sort_by=="POWER") and "RPM" or (STATE.sort_by=="RPM" and "HOST" or "POWER")
-    elseif kb==keys.f then STATE.filter_online = not STATE.filter_online
-    elseif kb==keys.l then local order={"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"}; local i=1; for ii,v in ipairs(order) do if v==STATE.filter_role then i=ii break end end; STATE.filter_role = order[i%#order+1] end
+    elseif kb==keys.s then
+      local current = v.filters.sort_by
+      local nexts = (current=="POWER") and "RPM" or (current=="RPM" and "HOST" or "POWER")
+      MODEL:set_overview_filter('sort_by', nexts)
+    elseif kb==keys.f then MODEL:set_overview_filter('filter_online', not v.filters.filter_online)
+    elseif kb==keys.l then local order={"ALL","MASTER","REACTOR","FUEL","WASTE","AUX"}; local i=1; for ii,val in ipairs(order) do if val==v.filters.filter_role then i=ii break end end; MODEL:set_overview_filter('filter_role', order[i%#order+1]) end
   end
 end
 
 local function gui_loop()
   if not (GUI and MON) then return end
   local router,scr=build_gui()
-  while true do if scr and scr._redraw then scr._redraw() end; router:draw(); sleep(0.05) end
+
+  request_redraw("init")
+  local tick=os.startTimer(1)
+  while true do
+    local ev={os.pullEvent()}
+    if ev[1]=="timer" and ev[2]==tick then
+      request_redraw("tick"); tick=os.startTimer(1)
+    elseif ev[1]=="monitor_touch" or ev[1]=="mouse_click" or ev[1]=="mouse_drag" or ev[1]=="term_resize" then
+      request_redraw(ev[1])
+    elseif ev[1]=="ui_redraw" then
+      redraw_pending=false
+      if scr and scr._redraw then scr._redraw() end
+      if router and router.draw then router:draw() end
+    end
+  end
 end
 
 print("System Overview ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
 bcast(PROTO.make_hello(IDENT))
-parallel.waitForAny(rx_loop, gui_loop, tui_loop)
+parallel.waitForAny(dispatcher_loop, gui_loop, tui_loop)

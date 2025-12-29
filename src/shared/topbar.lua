@@ -1,34 +1,23 @@
 --========================================================
--- /xreactor/shared/topbar.lua
 -- Einheitliche Topbar: Titel, Uhr, Alarm-Badge, NET-Status, HEALTH
 --========================================================
 local M = {}
-local function now_s() return os.epoch("utc")/1000 end
-local function try_wrap(name) local ok,p=pcall(peripheral.wrap,name); if ok then return p end; return nil end
 
 function M.create(opts)
   local tb = {
     title      = tostring((opts and opts.title) or "XReactor"),
-    auth_token = (opts and opts.auth_token) or "xreactor",
-    modem_side = (opts and opts.modem_side) or "right",
     monitor_name = (opts and opts.monitor_name) or nil,
-    window_s   = (opts and opts.window_s) or 300,
     show_clock = (opts and opts.show_clock) ~= false,
     show_net   = (opts and opts.show_net)   ~= false,
     show_alarm = (opts and opts.show_alarm) ~= false,
     show_health= (opts and opts.show_health) ~= false,
-    health = {
-      timeout_s = ((opts and opts.health) and opts.health.timeout_s) or 10,
-      warn_s    = ((opts and opts.health) and opts.health.warn_s)    or 20,
-      crit_s    = ((opts and opts.health) and opts.health.crit_s)    or 60,
-      min_nodes = ((opts and opts.health) and opts.health.min_nodes) or 1,
-    },
-    _alarm={list={}}, _nodes={ last_any=0, by_uid={} }, _labels={}, _gui=nil, _screen=nil,
-    _w=80, _h=25, _rx_running=false,
+    _labels={}, _gui=nil, _screen=nil,
+    _w=80, _h=25,
+    _view={ badge={total=0,crit=0,warn=0,info=0}, health={level="--"}, net_ok=false },
   }
 
-  local mon = tb.monitor_name and try_wrap(tb.monitor_name) or nil
-  if mon and mon.getSize then tb._w, tb._h=mon.getSize() end
+  local mon = tb.monitor_name and peripheral.wrap(tb.monitor_name) or nil
+  if mon and mon.getSize then tb._w, tb._h = mon.getSize() end
 
   local function pos_left() return 2,1 end
   local function pos_center() return math.max(2, math.floor(tb._w/2)-5), 1 end
@@ -46,68 +35,30 @@ function M.create(opts)
     if self.show_net    then local nx,ny = pos_right_net();    self._labels.net   = GUI.mkLabel(nx,ny, "[NET:--]",  {color=colors.red}); screen:add(self._labels.net) end
   end
 
-  function tb:start_rx()
-    if self._rx_running then return end
-    self._rx_running=true
-    parallel.waitForAll(function()
-      while self._rx_running do
-        local from,msg = rednet.receive(0.2)
-        if from and type(msg)=="table" and msg._auth==self.auth_token then
-          local ts = now_s()
-          if msg.type=="ALARM" then
-            table.insert(self._alarm.list, {ts=ts, level=string.upper(tostring(msg.level or "INFO"))})
-            local keep={}; for _,a in ipairs(self._alarm.list) do if (ts-a.ts)<=self.window_s then table.insert(keep,a) end end
-            self._alarm.list=keep
-          end
-          if msg.type=="TELEM" or msg.type=="NODE_HELLO" then
-            local uid = (msg.data and msg.data.uid) or msg.uid or ("id:"..tostring(from))
-            self._nodes.by_uid[tostring(uid)] = ts
-            self._nodes.last_any = ts
-          end
-        end
-      end
-    end)
+  function tb:set_view(view)
+    if type(view) ~= "table" then return end
+    self._view = view
   end
 
-  local function compute_badge(tb)
-    local ts=now_s(); local total,crit,warn,info=0,0,0,0
-    for _,a in ipairs(tb._alarm.list) do
-      if (ts-a.ts)<=tb.window_s then
-        total=total+1
-        if a.level=="CRIT" then crit=crit+1 elseif a.level=="WARN" then warn=warn+1 else info=info+1 end
-      end
-    end
-    return total,crit,warn,info
-  end
-
-  local function compute_health(tb)
-    if not rednet.isOpen(tb.modem_side or "right") then return "FAIL","Modem" end
-    local ts=now_s(); local total,offline,stale_max=0,0,0
-    for _,last in pairs(tb._nodes.by_uid) do
-      total=total+1; local age=ts-(last or 0); stale_max = math.max(stale_max, age)
-      if age>(tb.health.timeout_s or 10) then offline=offline+1 end
-    end
-    if total<(tb.health.min_nodes or 1) then return "DEG","NoNodes" end
-    if stale_max>(tb.health.crit_s or 60) then return "FAIL","Stale>crit" end
-    if offline>0 or stale_max>(tb.health.warn_s or 20) then return "DEG","Offline/Slow" end
-    return "OK","Healthy"
-  end
-
-  function tb:update()
-    if self._labels.clock then self._labels.clock.props.text = os.date("%H:%M:%S") end
+  function tb:update(view)
+    if type(view) == "table" then self:set_view(view) end
+    local v = self._view or {}
+    if self._labels.clock then self._labels.clock.props.text = v.clock or os.date("%H:%M:%S") end
     if self._labels.net then
-      local ok = rednet.isOpen(self.modem_side or "right")
-      self._labels.net.props.text  = ok and "[NET:OK]" or "[NET:--]"
-      self._labels.net.props.color = ok and colors.green or colors.red
+      local net_ok = v.net_ok == true
+      self._labels.net.props.text  = net_ok and "[NET:OK]" or "[NET:--]"
+      self._labels.net.props.color = net_ok and colors.green or colors.red
     end
     if self._labels.hlth then
-      local lvl = compute_health(self)
+      local lvl = v.health and v.health.level or "--"
       if lvl=="OK" then self._labels.hlth.props.text="[HLTH:OK]"; self._labels.hlth.props.color=colors.green
       elseif lvl=="DEG" then self._labels.hlth.props.text="[HLTH:DEG]"; self._labels.hlth.props.color=colors.orange
-      else self._labels.hlth.props.text="[HLTH:FAIL]"; self._labels.hlth.props.color=colors.red end
+      elseif lvl=="FAIL" then self._labels.hlth.props.text="[HLTH:FAIL]"; self._labels.hlth.props.color=colors.red
+      else self._labels.hlth.props.text="[HLTH:--]"; self._labels.hlth.props.color=colors.lightGray end
     end
     if self._labels.badge then
-      local total,crit,warn,info = compute_badge(self)
+      local b = v.badge or {}
+      local total = b.total or 0; local crit = b.crit or 0; local warn = b.warn or 0; local info = b.info or 0
       self._labels.badge.props.text = string.format("[Alarme: %d | C:%d W:%d I:%d]", total, crit, warn, info)
       self._labels.badge.props.color = (crit>0 and colors.red) or (warn>0 and colors.orange) or colors.lightBlue
     end

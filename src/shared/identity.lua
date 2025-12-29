@@ -9,6 +9,7 @@ local DEFAULTS = {
   id      = "01",
   cluster = "XR-CLUSTER-ALPHA",
   token   = "xreactor",
+  priority= 100,
 }
 
 local function gen_hostname(role, id)
@@ -38,6 +39,7 @@ function M.load_identity()
     hostname = tostring(cfg.hostname),
     cluster  = tostring(cfg.cluster),
     token    = tostring(cfg.token),
+    priority = tonumber(cfg.priority) or tonumber(DEFAULTS.priority),
   }
 end
 
