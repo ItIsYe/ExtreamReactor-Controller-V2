@@ -61,17 +61,21 @@ function M.create(opts)
     table.insert(self._subs[type_name], entry)
   end
 
-  function self:publish(msg)
+  function self:publish(msg, target)
     if type(msg) ~= "table" then return false end
     if not msg.type then return false end
     ensure_modem(self.modem_side)
     local tagged = PROTO.tag(PROTO.attach_identity(msg, self.identity), self.auth_token)
-    return pcall(rednet.broadcast, tagged)
+    if target then
+      return pcall(rednet.send, target, tagged)
+    else
+      return pcall(rednet.broadcast, tagged)
+    end
   end
 
-  function self:publish_type(type_name, data_tbl)
+  function self:publish_type(type_name, data_tbl, target)
     if type(type_name) ~= "string" then return false end
-    return self:publish({ type = type_name, data = data_tbl or {} })
+    return self:publish({ type = type_name, data = data_tbl or {} }, target)
   end
 
   function self:start()
