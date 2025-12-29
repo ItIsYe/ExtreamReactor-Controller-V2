@@ -24,6 +24,17 @@ P.T = {
   MASTER_ANNOUNCE = "MASTER_ANNOUNCE",
 }
 
+-- Kern-Nachrichtentypen (Akzeptanzvorgaben)
+P.MSG = {
+  HELLO = P.T.HELLO,
+  HEARTBEAT = P.T.HEARTBEAT,
+  STATE_UPDATE = P.T.STATE_UPDATE,
+  TARGET_UPDATE = P.T.TARGET_UPDATE,
+  ALARM = P.T.ALARM,
+  MASTER_ELECTION = P.T.MASTER_ELECTION,
+  MASTER_ANNOUNCE = P.T.MASTER_ANNOUNCE,
+}
+
 function P.tag(msg, auth)                     -- Auth + Version anfügen
   msg = msg or {}
   msg._auth = auth or P.AUTH_TOKEN_DEFAULT
