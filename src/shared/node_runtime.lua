@@ -56,7 +56,9 @@ function Runtime.create(opts)
   local function register_candidate(prio, node_id)
     prio = tonumber(prio) or -math.huge
     node_id = tonumber(node_id) or 0
-    if (not election.best_prio) or prio>election.best_prio or (prio==election.best_prio and node_id < (election.best_id or math.huge)) then
+    if (not election.best_prio)
+      or prio > election.best_prio
+      or (prio == election.best_prio and node_id < (election.best_id or math.huge)) then
       election.best_prio = prio
       election.best_id   = node_id
     end
