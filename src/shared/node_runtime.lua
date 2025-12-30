@@ -114,8 +114,15 @@ function Runtime.create(opts)
     return dispatcher:publish(PROTO.make_telem(ident, data_tbl or {}))
   end
 
-  function self:publish_alarm(level, code, text, uid)
-    return dispatcher:publish(PROTO.make_alarm(level, code, text, ident.id, uid))
+  function self:publish_alarm(severity, message, alarm_id, timestamp, details)
+    return dispatcher:publish(PROTO.make_alarm({
+      severity = severity,
+      message = message,
+      source_node_id = ident.id,
+      alarm_id = alarm_id,
+      timestamp = timestamp,
+      details = details,
+    }))
   end
 
   dispatcher:subscribe(PROTO.T.HEARTBEAT, function(msg, from)
@@ -146,7 +153,7 @@ function Runtime.create(opts)
     if type(cfg.on_alarm)=='function' then
       pcall(cfg.on_alarm, self, msg, from)
     else
-      log('ALARM: '..tostring(msg.msg or ''))
+      log('ALARM: '..tostring(msg.message or msg.msg or ''))
     end
   end)
 
