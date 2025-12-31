@@ -1,27 +1,4 @@
-
-local function abort_if_html_download()
-  local program = shell and shell.getRunningProgram and shell.getRunningProgram()
-  if not program or program == "" or not fs.exists(program) then
-    return false
-  end
-
-  local handle = fs.open(program, "r")
-  if not handle then return false end
-
-  local sample = string.lower(handle.read(512) or "")
-  handle.close()
-
-  if sample:find("<!doctype", 1, true) or sample:find("<html", 1, true) then
-    print("Installer download appears to be HTML.")
-    print("Please download installer.lua from raw.githubusercontent.com and retry.")
-    return true
-  end
-
-  return false
-end
-
-if abort_if_html_download() then return end
-
+-- installer.lua
 -- Interactive role selector for XReactor startup configuration
 
 local ROLE_SOURCE_FILES = {
@@ -30,6 +7,12 @@ local ROLE_SOURCE_FILES = {
   ENERGY       = "src/node/energy_node.lua",
   FUEL         = "src/node/fuel_node.lua",
   REPROCESSING = "src/node/reprocessing_node.lua",
+local ROLE_TARGETS = {
+  MASTER       = "/xreactor/master/master_home.lua",
+  REACTOR      = "/xreactor/node/reactor_node.lua",
+  ENERGY       = "/xreactor/node/energy_node.lua",
+  FUEL         = "/xreactor/node/fuel_node.lua",
+  REPROCESSING = "/xreactor/node/reprocessing_node.lua",
 }
 
 local ROLE_LIST = {
@@ -51,6 +34,19 @@ local function installer_dir()
   local program = shell and shell.getRunningProgram and shell.getRunningProgram()
   if not program or program == "" then
     return "/"
+local function draw_menu(selected)
+  term.clear()
+  term.setCursorPos(1, 1)
+  center_print(1, "XReactor Role Installer")
+  center_print(3, "Use ↑/↓ or W/S to select a role, Enter to continue")
+
+  for i, role in ipairs(ROLE_LIST) do
+    local prefix = "[ ]"
+    if i == selected then prefix = "[>]" end
+    local line = string.format("%s %s - %s", prefix, role.name, role.description)
+    term.setCursorPos(3, 4 + i)
+    term.clearLine()
+    term.write(line)
   end
   local dir = fs.getDir(program)
   if dir == "" then return "/" end
@@ -132,12 +128,14 @@ local function select_role()
 end
 
 local function confirm_role(role, role_targets)
+local function confirm_role(role)
   while true do
     term.clear()
     term.setCursorPos(1, 2)
     center_print(2, "Confirm role selection")
     center_print(4, "Role: " .. role.name)
     center_print(5, "Target: " .. (role_targets[role.name] or "unknown"))
+    center_print(5, "Target: " .. (ROLE_TARGETS[role.name] or "unknown"))
     center_print(7, "Press Y/Enter to confirm or N to go back")
 
     local event, code = os.pullEvent()
@@ -164,6 +162,12 @@ local function resolve_target(role_name, role_targets)
 end
 
 local function write_startup(role_name, target)
+local function write_startup(role_name)
+  local target = ROLE_TARGETS[role_name]
+  if not target then
+    error("Unknown role: " .. tostring(role_name))
+  end
+
   local contents = string.format([[-- Auto-generated startup for role %s
 local target = %q
 
@@ -210,6 +214,9 @@ local function main()
     wait_for_key()
     return
   end
+  handle.write(contents)
+  handle.close()
+end
 
   local role_targets = build_role_targets(manifest)
   local choice
@@ -239,11 +246,22 @@ local function main()
   end
 
   write_startup(choice.name, target)
+local function main()
+  term.setCursorBlink(false)
+  local choice
+
+  while true do
+    choice = select_role()
+    if confirm_role(choice) then break end
+  end
+
+  write_startup(choice.name)
 
   term.clear()
   term.setCursorPos(1, 2)
   center_print(2, "Startup configured for role: " .. choice.name)
   center_print(4, "Target file: " .. target)
+  center_print(4, "Target file: " .. ROLE_TARGETS[choice.name])
   center_print(6, "Reboot the computer to launch the selected role.")
   center_print(8, "Installer will now exit.")
 end
