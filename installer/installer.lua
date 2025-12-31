@@ -1,6 +1,12 @@
 -- installer.lua
 -- Interactive role selector for XReactor startup configuration
 
+local ROLE_SOURCE_FILES = {
+  MASTER       = "src/master/master_home.lua",
+  REACTOR      = "src/node/reactor_node.lua",
+  ENERGY       = "src/node/energy_node.lua",
+  FUEL         = "src/node/fuel_node.lua",
+  REPROCESSING = "src/node/reprocessing_node.lua",
 local ROLE_TARGETS = {
   MASTER       = "/xreactor/master/master_home.lua",
   REACTOR      = "/xreactor/node/reactor_node.lua",
@@ -22,6 +28,62 @@ local function center_print(y, text)
   local x = math.max(1, math.floor((w - #text) / 2) + 1)
   term.setCursorPos(x, y)
   term.write(text)
+end
+
+local function installer_dir()
+  local program = shell and shell.getRunningProgram and shell.getRunningProgram()
+  if not program or program == "" then
+    return "/"
+local function draw_menu(selected)
+  term.clear()
+  term.setCursorPos(1, 1)
+  center_print(1, "XReactor Role Installer")
+  center_print(3, "Use ↑/↓ or W/S to select a role, Enter to continue")
+
+  for i, role in ipairs(ROLE_LIST) do
+    local prefix = "[ ]"
+    if i == selected then prefix = "[>]" end
+    local line = string.format("%s %s - %s", prefix, role.name, role.description)
+    term.setCursorPos(3, 4 + i)
+    term.clearLine()
+    term.write(line)
+  end
+  local dir = fs.getDir(program)
+  if dir == "" then return "/" end
+  return "/" .. dir
+end
+
+local function load_manifest()
+  local path = fs.combine(installer_dir(), "manifest.lua")
+  local ok, manifest = pcall(dofile, path)
+  if not ok then
+    return nil, "Unable to load manifest: " .. tostring(manifest)
+  end
+  if type(manifest) ~= "table" or type(manifest.files) ~= "table" then
+    return nil, "Manifest missing file list"
+  end
+  return manifest
+end
+
+local function build_role_targets(manifest)
+  local targets = {}
+  for role, src in pairs(ROLE_SOURCE_FILES) do
+    for _, file in ipairs(manifest.files) do
+      if file.src == src then
+        targets[role] = file.dst
+        break
+      end
+    end
+  end
+  return targets
+end
+
+local function is_advanced_computer()
+  return term.isColor and term.isColor()
+end
+
+local function wait_for_key()
+  os.pullEvent("key")
 end
 
 local function draw_menu(selected)
@@ -65,12 +127,14 @@ local function select_role()
   end
 end
 
+local function confirm_role(role, role_targets)
 local function confirm_role(role)
   while true do
     term.clear()
     term.setCursorPos(1, 2)
     center_print(2, "Confirm role selection")
     center_print(4, "Role: " .. role.name)
+    center_print(5, "Target: " .. (role_targets[role.name] or "unknown"))
     center_print(5, "Target: " .. (ROLE_TARGETS[role.name] or "unknown"))
     center_print(7, "Press Y/Enter to confirm or N to go back")
 
@@ -86,6 +150,18 @@ local function confirm_role(role)
   end
 end
 
+local function resolve_target(role_name, role_targets)
+  local target = role_targets[role_name]
+  if not target then
+    return nil, "No destination recorded for role: " .. tostring(role_name)
+  end
+  if not fs.exists(target) then
+    return nil, "Startup target missing: " .. target
+  end
+  return target
+end
+
+local function write_startup(role_name, target)
 local function write_startup(role_name)
   local target = ROLE_TARGETS[role_name]
   if not target then
@@ -129,6 +205,49 @@ end
 
 local function main()
   term.setCursorBlink(false)
+  local manifest, manifest_err = load_manifest()
+  if not manifest then
+    term.clear()
+    center_print(2, "Cannot read installer manifest.")
+    center_print(4, manifest_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+  handle.write(contents)
+  handle.close()
+end
+
+  local role_targets = build_role_targets(manifest)
+  local choice
+
+  while true do
+    choice = select_role()
+    if confirm_role(choice, role_targets) then break end
+  end
+
+  if choice.name == "MASTER" and not is_advanced_computer() then
+    term.clear()
+    center_print(2, "MASTER role requires an Advanced Computer.")
+    center_print(4, "Install on an Advanced Computer and retry.")
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
+  local target, err = resolve_target(choice.name, role_targets)
+  if not target then
+    term.clear()
+    center_print(2, "Cannot configure startup.")
+    center_print(4, err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
+  write_startup(choice.name, target)
+local function main()
+  term.setCursorBlink(false)
   local choice
 
   while true do
@@ -141,6 +260,7 @@ local function main()
   term.clear()
   term.setCursorPos(1, 2)
   center_print(2, "Startup configured for role: " .. choice.name)
+  center_print(4, "Target file: " .. target)
   center_print(4, "Target file: " .. ROLE_TARGETS[choice.name])
   center_print(6, "Reboot the computer to launch the selected role.")
   center_print(8, "Installer will now exit.")
