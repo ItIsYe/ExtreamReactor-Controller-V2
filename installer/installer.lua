@@ -1,4 +1,4 @@
-
+-- This installer must be downloaded via raw.githubusercontent.com so it remains valid Lua.
 local function abort_if_html_download()
   local program = shell and shell.getRunningProgram and shell.getRunningProgram()
   if not program or program == "" or not fs.exists(program) then
@@ -11,7 +11,9 @@ local function abort_if_html_download()
   local sample = string.lower(handle.read(512) or "")
   handle.close()
 
-  if sample:find("<!doctype", 1, true) or sample:find("<html", 1, true) then
+  if string.find(sample, "<!doctype", 1, true)
+    or string.find(sample, "<html", 1, true)
+    or string.find(sample, "<head", 1, true) then
     print("Installer download appears to be HTML.")
     print("Please download installer.lua from raw.githubusercontent.com and retry.")
     return true
