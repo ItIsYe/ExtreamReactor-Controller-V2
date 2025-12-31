@@ -84,14 +84,81 @@ end
 local function make_pressure_tracker(cfg)
   local pressure = { energy = 'NORMAL', fuel = 'NORMAL' }
   local priority_baseline = tonumber(cfg.priority_baseline or 100) or 100
+  local output_factor = 1
+  local ramp_up_rate = tonumber(cfg.pressure_ramp_up_per_sec or 0.25) or 0.25
+  local ramp_down_rate = tonumber(cfg.pressure_ramp_down_per_sec or 0.35) or 0.35
+  local target_blend = tonumber(cfg.pressure_target_blend or 0.35) or 0.35
+  local deadband = tonumber(cfg.pressure_deadband or 0.02) or 0.02
+  local min_factor = tonumber(cfg.pressure_min_output_factor or 0.2) or 0.2
+  local max_factor = tonumber(cfg.pressure_max_output_factor or 1.5) or 1.5
+  local priority_relief_scale = tonumber(cfg.priority_relief_scale or 1.35) or 1.35
+  local stable_window = tonumber(cfg.pressure_stable_sec or 3) or 3
+  local last_desired = output_factor
+  local last_update_time = os.clock()
+  local pressure_weight = {
+    energy_low    = tonumber(cfg.energy_pressure_raise or 0.3) or 0.3,
+    energy_high   = tonumber(cfg.energy_pressure_relief or 0.2) or 0.2,
+    fuel_low      = tonumber(cfg.fuel_pressure_conserve or 0.25) or 0.25,
+    fuel_high     = tonumber(cfg.fuel_pressure_opportunity or 0.1) or 0.1,
+  }
+
+  local pending = {
+    energy = nil,
+    fuel = nil,
+  }
+
+  local function stabilize(kind, new_pressure, new_trend)
+    if not new_pressure then return end
+
+    local now = os.clock()
+    local current = pressure[kind]
+
+    if new_pressure == current then
+      if new_trend then pressure[kind .. '_trend'] = new_trend end
+      pending[kind] = nil
+      return
+    end
+
+    if new_pressure == 'LOW' then
+      pressure[kind] = new_pressure
+      if new_trend then pressure[kind .. '_trend'] = new_trend end
+      pending[kind] = nil
+      return
+    end
+
+    local candidate = pending[kind]
+    if not candidate or candidate.value ~= new_pressure or candidate.trend ~= new_trend then
+      pending[kind] = { value = new_pressure, trend = new_trend, since = now }
+      return
+    end
+
+    if (now - candidate.since) >= stable_window then
+      pressure[kind] = new_pressure
+      if new_trend then pressure[kind .. '_trend'] = new_trend end
+      pending[kind] = nil
+    end
+  end
 
   local function update_from_telem(msg)
     local data = type(msg.data) == 'table' and msg.data or msg
     local ep = data and data.energy_pressure
     local fp = data and data.fuel_pressure
+    local rec = data and data.policy_recommendation
+    local suggested = rec and rec.suggested_policy
 
-    if ep then pressure.energy = tostring(ep):upper() end
-    if fp then pressure.fuel = tostring(fp):upper() end
+    local ep_trend = data and data.energy_pressure_trend and tostring(data.energy_pressure_trend):lower()
+    local fp_trend = data and data.fuel_pressure_trend and tostring(data.fuel_pressure_trend):lower()
+
+    if ep then stabilize('energy', tostring(ep):upper(), ep_trend) end
+    if fp then stabilize('fuel', tostring(fp):upper(), fp_trend) end
+
+    if type(suggested) == 'table' then
+      if suggested.kind == 'energy' then
+        pressure.energy_policy = suggested
+      elseif suggested.kind == 'fuel' then
+        pressure.fuel_policy = suggested
+      end
+    end
   end
 
   local function clamp(v, minv, maxv)
@@ -101,33 +168,64 @@ local function make_pressure_tracker(cfg)
     return v
   end
 
+  local function ramp_towards(target_value)
+    if output_factor == nil then output_factor = target_value end
+
+    local now = os.clock()
+    local dt = math.max(now - (last_update_time or now), 0)
+    last_update_time = now
+
+    local delta = target_value - output_factor
+    if math.abs(delta) <= deadband then return output_factor end
+
+    local rate = delta > 0 and ramp_up_rate or ramp_down_rate
+    local max_delta = rate * dt
+
+    if math.abs(delta) <= max_delta then return target_value end
+    if delta > 0 then
+      return output_factor + max_delta
+    else
+      return output_factor - max_delta
+    end
+  end
+
   local function adjust_target(target, node_priority)
     local adjusted = {}
     if type(target) == 'table' then for k,v in pairs(target) do adjusted[k] = v end end
 
     local priority_factor = math.max((tonumber(node_priority) or priority_baseline) / priority_baseline, 0)
-    local output_factor = 1
+    -- Lower priority (<1.0) should shed load earlier/more aggressively than higher priority (>1.0)
+    local relief_scale = (1 / math.max(priority_factor, 0.1)) * priority_relief_scale
+    local desired_factor = 1
 
     local function apply_energy_pressure()
       if pressure.energy == 'LOW' then
-        output_factor = output_factor + 0.25 * priority_factor
+        desired_factor = desired_factor + pressure_weight.energy_low * priority_factor
       elseif pressure.energy == 'HIGH' then
-        output_factor = output_factor - 0.2
+        desired_factor = desired_factor - pressure_weight.energy_high * relief_scale
       end
     end
 
     local function apply_fuel_pressure()
       if pressure.fuel == 'LOW' then
-        output_factor = output_factor - 0.3
+        desired_factor = desired_factor - pressure_weight.fuel_low * relief_scale
       elseif pressure.fuel == 'HIGH' then
-        output_factor = output_factor + 0.1 * priority_factor
+        desired_factor = desired_factor + pressure_weight.fuel_high * priority_factor
       end
     end
 
     apply_energy_pressure()
     apply_fuel_pressure()
 
-    output_factor = math.max(output_factor, 0)
+    desired_factor = clamp(desired_factor, min_factor, max_factor)
+
+    -- dampen oscillation from noisy pressure changes before ramping
+    if last_desired then
+      desired_factor = last_desired + (desired_factor - last_desired) * target_blend
+    end
+    last_desired = desired_factor
+
+    output_factor = ramp_towards(desired_factor)
 
     local function copy_policy(policy)
       local p = {}
@@ -147,7 +245,10 @@ local function make_pressure_tracker(cfg)
       energy = pressure.energy,
       fuel = pressure.fuel,
       priority_factor = priority_factor,
+      desired_output_factor = desired_factor,
       output_factor = output_factor,
+      energy_trend = pressure.energy_trend,
+      fuel_trend = pressure.fuel_trend,
     }
 
     return adjusted

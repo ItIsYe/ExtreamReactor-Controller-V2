@@ -62,20 +62,40 @@ local function make_energy_pressure_policy(cfg)
   local thresholds = merge_thresholds({
     low_pct = 15,
     high_pct = 90,
+    trend_drop_pct = 5,
+    trend_rise_pct = 3,
   }, cfg.pressure_thresholds)
 
   local read_metrics = make_metrics_reader(cfg)
-  local last_signal
+  local last_pressure
+  local last_trend
+  local last_buffer
+  local pending_pressure
+  local pending_trend
+  local pending_since
+  local stable_window = tonumber(cfg.pressure_stable_sec or 4) or 4
 
-  local function classify_pressure(buffer_pct)
-    if not buffer_pct then return nil, nil end
+  local function classify_trend(buffer_pct)
+    if not last_buffer or not buffer_pct then return 'steady', 0 end
+    local delta = buffer_pct - last_buffer
+    if delta <= -thresholds.trend_drop_pct then return 'falling', delta end
+    if delta >= thresholds.trend_rise_pct then return 'rising', delta end
+    return 'steady', delta
+  end
+
+  local function classify_pressure(buffer_pct, trend)
+    if not buffer_pct then return nil, 'Keine Energiedaten verfügbar' end
     if buffer_pct <= thresholds.low_pct then
-      return 'LOW', ('Energiespeicher kritisch niedrig: %.1f%%'):format(buffer_pct)
+      return 'LOW', ('Energiespeicher kritisch niedrig: %.1f%% (%s)'):format(buffer_pct, trend)
     elseif buffer_pct >= thresholds.high_pct then
-      return 'HIGH', ('Energiespeicher fast voll: %.1f%%'):format(buffer_pct)
-    else
-      return 'NORMAL', ('Energiespeicher im Normalbereich: %.1f%%'):format(buffer_pct)
+      return 'HIGH', ('Energiespeicher fast voll: %.1f%% (%s)'):format(buffer_pct, trend)
     end
+
+    if trend == 'falling' and buffer_pct <= (thresholds.low_pct + thresholds.trend_drop_pct) then
+      return 'LOW', ('Energiespeicher fällt schnell: %.1f%%'):format(buffer_pct)
+    end
+
+    return 'NORMAL', ('Energiespeicher im Normalbereich: %.1f%% (%s)'):format(buffer_pct, trend)
   end
 
   return function(runtime)
@@ -83,25 +103,57 @@ local function make_energy_pressure_policy(cfg)
     if type(metrics) ~= 'table' then return end
 
     local buffer = pct_value(metrics.buffer_pct or metrics.buffer_fill)
-    local pressure, rationale = classify_pressure(buffer)
-    if not pressure or pressure == last_signal then return end
-    last_signal = pressure
+    local trend, delta = classify_trend(buffer)
+    local pressure, rationale = classify_pressure(buffer, trend)
+    last_buffer = buffer or last_buffer
+
+    if not pressure then return end
+    local now = os.clock()
+
+    if pressure == last_pressure and trend == last_trend then
+      pending_pressure, pending_trend, pending_since = nil, nil, nil
+      return
+    end
+
+    if pressure ~= 'LOW' then
+      if pending_pressure ~= pressure or pending_trend ~= trend then
+        pending_pressure, pending_trend, pending_since = pressure, trend, now
+        return
+      end
+
+      if pending_since and (now - pending_since) < stable_window then
+        return
+      end
+    end
+
+    last_pressure = pressure
+    last_trend = trend
+    pending_pressure, pending_trend, pending_since = nil, nil, nil
+
+    local ts = os.epoch('utc')
+    local source_id = runtime and runtime.IDENT and runtime.IDENT.id or os.getComputerID()
 
     local recommendation = {
       type = 'energy_pressure',
       pressure = pressure,
       buffer_pct = buffer,
+      trend = trend,
+      delta = delta,
       rationale = rationale,
       intent = 'recommendation',
+      timestamp = ts,
+      source_node_id = source_id,
       suggested_policy = {
         kind = 'energy',
         pressure = pressure,
+        trend = trend,
       },
     }
 
     if runtime and runtime.publish_telem then
       runtime:publish_telem({
         energy_pressure = pressure,
+        energy_pressure_trend = trend,
         policy_recommendation = recommendation,
       })
     end
