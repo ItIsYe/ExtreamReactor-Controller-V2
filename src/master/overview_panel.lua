@@ -17,7 +17,19 @@ function M.create(opts)
   local on_home = cfg.on_home or noop
   local on_filter_change = cfg.on_filter_change or noop
   local on_refresh = cfg.on_refresh or noop
-  local view_state = { overview = { filters = { sort_by = 'POWER', filter_online = true, filter_role = 'ALL' }, rows = {}, kpi_power_text = '', kpi_rpm_text = '', kpi_online_text = '', kpi_fuel_text = '' }, topbar = {} }
+  local view_state = {
+    overview = {
+      filters = { sort_by = 'POWER', filter_online = true, filter_role = 'ALL' },
+      rows = {},
+      policy_rows = {},
+      priority_rows = {},
+      kpi_power_text = '',
+      kpi_rpm_text = '',
+      kpi_online_text = '',
+      kpi_fuel_text = '',
+    },
+    topbar = {},
+  }
 
   local redraw_pending=false
   local router, scr
@@ -41,7 +53,9 @@ function M.create(opts)
     local kpiC=GUI.mkLabel(44,3,"Online: - / -",{color=colors.orange}); scr:add(kpiC)
     local kpiD=GUI.mkLabel(64,3,"Fuel%: - .. -",{color=colors.yellow}); scr:add(kpiD)
 
-    local lst=GUI.mkList(2,5,78,14,{}); scr:add(lst)
+    local lst=GUI.mkList(2,5,78,10,{}); scr:add(lst)
+    local lblPolicy=GUI.mkLabel(2,14,"Policies & Prioritäten",{color=colors.lightGray}); scr:add(lblPolicy)
+    local lstPolicy=GUI.mkList(2,15,78,5,{}); scr:add(lstPolicy)
 
     local function set_sort(v) on_filter_change('sort_by', v) end
     local function set_filter_online(v) on_filter_change('filter_online', v=="ONLINE") end
@@ -60,6 +74,7 @@ function M.create(opts)
       kpiC.props.text = v.kpi_online_text or ''
       kpiD.props.text = v.kpi_fuel_text or ''
       lst.props.items = v.rows or {}
+      lstPolicy.props.items = v.policy_rows or {}
       if btnSort.props and v.filters then btnSort.props.value = v.filters.sort_by end
       if btnFilt.props and v.filters then btnFilt.props.value = v.filters.filter_online and "ONLINE" or "ALLE" end
       if btnRole.props and v.filters then btnRole.props.value = v.filters.filter_role end

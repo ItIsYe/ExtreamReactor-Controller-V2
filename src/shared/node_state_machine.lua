@@ -13,11 +13,13 @@ local function now_s() return os.epoch("utc")/1000 end
 function SM.create(opts)
   local cfg = opts or {}
   local self = {
-    state = "INIT",
+    state = tostring(cfg.initial_state or "INIT"):upper(),
     master_timeout_s = tonumber(cfg.master_timeout_s or 10) or 10,
     on_change = cfg.on_change,
     _last_master = now_s(),
   }
+
+  if not VALID[self.state] then self.state = "INIT" end
 
   local function change(new_state, reason)
     new_state = tostring(new_state or ""):upper()
