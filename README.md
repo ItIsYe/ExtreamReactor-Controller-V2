@@ -4,13 +4,13 @@
 XReactor Controller V2 is a distributed control layer for Extreme Reactors installations built on ComputerCraft computers. It keeps power production safe and reliable by coordinating advisory policies, telemetry, and alarms without ever depending on one computer. The system solves for resilience (no single point of failure) and stability (gradual, informed adjustments) so reactors stay productive even when conditions or connectivity change.
 
 ## Installing the controller
-Download the installer directly from the raw GitHub URL so the file is saved as valid Lua rather than an HTML web page:
+Download the installer directly from the `raw.githubusercontent.com` URL (not the GitHub file view) so the file is saved as valid Lua rather than an HTML web page:
 
 ```
 wget https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main/installer/installer.lua
 ```
 
-Run the downloaded `installer.lua` from the ComputerCraft computer. If the file was fetched from a GitHub blob page instead of the raw URL, it will contain HTML and the installer will refuse to run until it is re-downloaded from `raw.githubusercontent.com`.
+Run the downloaded `installer.lua` from the ComputerCraft computer. If the file is accidentally fetched from the GitHub blob page and saved as HTML, the installer will stop immediately and ask you to re-download it from `raw.githubusercontent.com`.
 
 ## Distributed, Autonomous Architecture
 Nodes communicate through a lightweight dispatcher that shares telemetry, policy recommendations, and state updates. Each node maintains its own control loop and safety checks so it can keep operating even if other peers are offline. Coordination emerges from shared advisories instead of remote control, keeping decisions near the hardware.
