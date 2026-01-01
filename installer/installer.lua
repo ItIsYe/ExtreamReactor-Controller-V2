@@ -25,20 +25,73 @@ local function center_print(y, text)
   term.write(text)
 end
 
-local function installer_dir()
-  local program = shell and shell.getRunningProgram and shell.getRunningProgram()
-  if not program or program == "" then
-    return "/"
+local MANIFEST_URL = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
+local MANIFEST_PATH = "/installer/manifest.lua"
+
+local function write_file(path, contents)
+  local dir = fs.getDir(path)
+  if dir and dir ~= "" and not fs.exists(dir) then
+    fs.makeDir(dir)
   end
-  local dir = fs.getDir(program)
-  if dir == "" then return "/" end
-  return "/" .. dir
+
+  local handle = fs.open(path, "w")
+  if not handle then
+    return false, "Unable to open manifest for writing: " .. path
+  end
+  handle.write(contents)
+  handle.close()
+  return true
+end
+
+local function download_manifest()
+  local handle, err = http.get(MANIFEST_URL)
+  if not handle then
+    return nil, "Failed to download manifest: " .. tostring(err)
+  end
+
+  local status = handle.getResponseCode and handle.getResponseCode() or 0
+  if status == 404 then
+    handle.close()
+    return nil, "Manifest not found (404)"
+  elseif status >= 400 or status < 200 then
+    handle.close()
+    return nil, "Manifest download failed with status " .. tostring(status)
+  end
+
+  local content = handle.readAll() or ""
+  handle.close()
+
+  if content == "" then
+    return nil, "Manifest download returned empty content"
+  end
+
+  local ok, write_err = write_file(MANIFEST_PATH, content)
+  if not ok then
+    return nil, write_err
+  end
+
+  if not fs.exists(MANIFEST_PATH) then
+    return nil, "Manifest missing after download"
+  end
+
+  local readable = fs.open(MANIFEST_PATH, "r")
+  if not readable then
+    return nil, "Manifest not readable after download"
+  end
+  readable.close()
+
+  return MANIFEST_PATH
 end
 
 local function load_manifest()
-  local path = fs.combine(installer_dir(), "manifest.lua")
+  fs.delete(MANIFEST_PATH)
+  local path, download_err = download_manifest()
+  if not path then
+    return nil, download_err
+  end
+
   local ok, manifest = pcall(dofile, path)
-   if not ok then
+  if not ok then
     return nil, "Unable to load manifest: " .. tostring(manifest)
   end
   if type(manifest) ~= "table" or type(manifest.files) ~= "table" then
