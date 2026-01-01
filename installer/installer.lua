@@ -83,8 +83,50 @@ local function download_manifest()
   return MANIFEST_PATH
 end
 
+local MANIFEST_URL = "https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
+
+local function manifest_path()
+  return fs.combine(installer_dir(), "manifest.lua")
+end
+
+local function write_file(path, contents)
+  local dir = fs.getDir(path)
+  if dir and dir ~= "" and not fs.exists(dir) then
+    fs.makeDir(dir)
+  end
+
+  local handle = fs.open(path, "w")
+  if not handle then
+    return false, "Unable to open manifest for writing: " .. path
+  end
+  handle.write(contents)
+  handle.close()
+  return true
+end
+
+local function download_manifest()
+  local handle, err = http.get(MANIFEST_URL)
+  if not handle then
+    return nil, "Failed to download manifest: " .. tostring(err)
+  end
+
+  local content = handle.readAll() or ""
+  handle.close()
+
+  local ok, write_err = write_file(manifest_path(), content)
+  if not ok then
+    return nil, write_err
+  end
+
+  if not fs.exists(manifest_path()) then
+    return nil, "Manifest missing after download"
+  end
+
+  return manifest_path()
+end
+
 local function load_manifest()
-  fs.delete(MANIFEST_PATH)
+  fs.delete(manifest_path())
   local path, download_err = download_manifest()
   if not path then
     return nil, download_err
