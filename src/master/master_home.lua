@@ -4,6 +4,34 @@
 --========================================================
 local function now_s() return os.epoch("utc")/1000 end
 
+local REQUIRED_MASTER_PATHS = {
+  "/xreactor/master/master_core.lua",
+  "/xreactor/master/master_model.lua",
+  "/xreactor/master/fuel_panel.lua",
+  "/xreactor/master/waste_panel.lua",
+  "/xreactor/master/overview_panel.lua",
+  "/xreactor/master/alarm_panel.lua",
+  "/xreactor/shared/protocol.lua",
+  "/xreactor/shared/identity.lua",
+  "/xreactor/shared/local_state_store.lua",
+  "/xreactor/shared/network_dispatcher.lua",
+  "/xreactor/shared/node_state_machine.lua",
+  "/xreactor/shared/topbar.lua",
+}
+
+local function verify_master_dependencies()
+  local missing = {}
+  for _, path in ipairs(REQUIRED_MASTER_PATHS) do
+    if not fs.exists(path) then table.insert(missing, path) end
+  end
+
+  if #missing > 0 then
+    error("Master startup aborted: missing files -> " .. table.concat(missing, ", "), 0)
+  end
+end
+
+verify_master_dependencies()
+
 -- Basiskonfig (Modem/Auth kann via config_master.lua überschrieben werden)
 local CFG=(function()
   local t={ auth_token="xreactor", modem_side="right", ui={text_scale=0.5} }
