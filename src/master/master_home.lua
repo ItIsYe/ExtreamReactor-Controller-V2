@@ -71,13 +71,71 @@ local function load_ui_map()
   return {monitors={}, autoscale={enabled=false}}
 end
 local UIMAP=load_ui_map()
+local function detect_monitors()
+  local monitors = {}
+  for _, name in ipairs(peripheral.getNames()) do
+    if peripheral.getType(name) == "monitor" then
+      local mon = peripheral.wrap(name)
+      if mon then
+        table.insert(monitors, { name = name, peripheral = mon })
+      end
+    end
+  end
+  return monitors
+end
+
+local function prepare_monitor(mon, name)
+  local entry = (UIMAP.monitors or {})[name]
+  local scale = entry and entry.scale or (CFG.ui and CFG.ui.text_scale)
+  if scale then pcall(mon.setTextScale, tonumber(scale) or 1.0) end
+  if mon.setBackgroundColor then pcall(mon.setBackgroundColor, colors.black) end
+  if mon.clear then pcall(mon.clear) end
+  if mon.setCursorPos then pcall(mon.setCursorPos, 1, 1) end
+end
+
+local function allocate_monitors()
+  local detected = detect_monitors()
+  local role_map = {}
+  local unused = {}
+
+  for _, entry in ipairs(detected) do
+    prepare_monitor(entry.peripheral, entry.name)
+    local cfg = (UIMAP.monitors or {})[entry.name]
+    if cfg and cfg.role then
+      role_map[cfg.role] = role_map[cfg.role] or {}
+      table.insert(role_map[cfg.role], entry)
+    else
+      table.insert(unused, entry)
+    end
+  end
+
+  local function take(role)
+    if role_map[role] and #role_map[role] > 0 then
+      return table.remove(role_map[role], 1)
+    end
+    if #unused > 0 then
+      return table.remove(unused, 1)
+    end
+    return nil
+  end
+
+  return {
+    take = take,
+    remaining = function()
+      local rest = {}
+      for _, entries in pairs(role_map) do
+        for _, e in ipairs(entries) do table.insert(rest, e) end
+      end
+      for _, e in ipairs(unused) do table.insert(rest, e) end
+      return rest
+    end,
+  }
+end
+
+local monitor_allocator = allocate_monitors()
 local function pick_monitor_for_role(role)
-  local name=nil; for n,cfg in pairs(UIMAP.monitors or {}) do if cfg.role==role then name=n break end end
-  local mon = name and peripheral.wrap(name) or ({peripheral.find("monitor")})[1]
-  if not mon then return nil end
-  local entry=(UIMAP.monitors or {})[peripheral.getName(mon)]
-  local scale= entry and entry.scale or (CFG.ui and CFG.ui.text_scale); if scale then pcall(mon.setTextScale, tonumber(scale) or 1.0) end
-  return mon
+  local entry = monitor_allocator.take(role)
+  return entry and entry.peripheral or nil
 end
 
 local MON=pick_monitor_for_role("master_home")
@@ -146,38 +204,81 @@ local function dispatcher_loop() CORE:start_dispatcher() end
 
 local function start_panels()
   local home_panel = create_home_panel()
-  local fuel_panel = FuelPanel.create({monitor=pick_monitor_for_role("fuel_manager")})
-  local waste_panel = WastePanel.create({monitor=pick_monitor_for_role("waste_service")})
+  local fuel_mon = pick_monitor_for_role("fuel_manager")
+  local waste_mon = pick_monitor_for_role("waste_service")
+  local alarm_mon = pick_monitor_for_role("alarm_center")
+  local overview_mon = pick_monitor_for_role("system_overview")
+
+  local fuel_panel = fuel_mon and FuelPanel.create({monitor=fuel_mon}) or nil
+  local waste_panel = waste_mon and WastePanel.create({monitor=waste_mon}) or nil
   local alarm_panel = AlarmPanel.create({
-    monitor=pick_monitor_for_role("alarm_center"),
+    monitor=alarm_mon,
     on_home = function() shell.run("/xreactor/master/master_home.lua") end,
     on_ack = function() MODEL:ack_alarms() end,
   })
-  local overview_panel = OverviewPanel.create({
-    monitor=pick_monitor_for_role("system_overview"),
+  local overview_panel = overview_mon and OverviewPanel.create({
+    monitor=overview_mon,
     on_filter_change = function(k,v) MODEL:set_overview_filter(k,v) end,
     on_refresh = function() CORE:publish(PROTO.make_hello(IDENT)) end,
-  })
+  }) or nil
+  local function placeholder_panel(entry)
+    if not entry or not entry.peripheral then return nil end
+    local mon = entry.peripheral
+    local label = "Monitor " .. (entry.name or "?")
+
+    local function draw_placeholder()
+      pcall(mon.setBackgroundColor, colors.black)
+      pcall(mon.setTextColor, colors.lightGray)
+      pcall(mon.clear)
+      pcall(mon.setCursorPos, 2, 2)
+      pcall(mon.write, "XReactor ▢ No panel assigned")
+      pcall(mon.setCursorPos, 2, 4)
+      pcall(mon.write, label)
+    end
+
+    return {
+      monitor = mon,
+      start = draw_placeholder,
+      handle_event = function(ev)
+        if ev[1] == "monitor_touch" and ev[2] == entry.name then draw_placeholder() end
+      end,
+    }
+  end
+
+  local placeholder_panels = {}
+  for _, entry in ipairs(monitor_allocator.remaining()) do
+    table.insert(placeholder_panels, placeholder_panel(entry))
+  end
+
   local panels = { home_panel, fuel_panel, waste_panel, alarm_panel, overview_panel }
+  for _, p in ipairs(placeholder_panels) do table.insert(panels, p) end
 
   local function topbar_view()
     return MODEL:get_topbar_view(TOPBAR_CFG)
   end
 
   local function refresh_fuel()
-    fuel_panel.set_view({ rows = MODEL:get_fuel_rows(), topbar = topbar_view() })
+    if fuel_panel and fuel_panel.set_view then
+      fuel_panel.set_view({ rows = MODEL:get_fuel_rows(), topbar = topbar_view() })
+    end
   end
 
   local function refresh_waste()
-    waste_panel.set_view({ rows = MODEL:get_waste_rows(), topbar = topbar_view() })
+    if waste_panel and waste_panel.set_view then
+      waste_panel.set_view({ rows = MODEL:get_waste_rows(), topbar = topbar_view() })
+    end
   end
 
   local function refresh_alarm()
-    alarm_panel.set_view({ alarm = MODEL:get_alarm_view(), topbar = topbar_view() })
+    if alarm_panel and alarm_panel.set_view then
+      alarm_panel.set_view({ alarm = MODEL:get_alarm_view(), topbar = topbar_view() })
+    end
   end
 
   local function refresh_overview()
-    overview_panel.set_view({ overview = MODEL:get_overview_view(), topbar = topbar_view() })
+    if overview_panel and overview_panel.set_view then
+      overview_panel.set_view({ overview = MODEL:get_overview_view(), topbar = topbar_view() })
+    end
   end
 
   MODEL:subscribe('fuel', refresh_fuel)
