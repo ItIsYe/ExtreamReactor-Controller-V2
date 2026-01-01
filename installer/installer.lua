@@ -85,6 +85,10 @@ end
 
 local MANIFEST_URL = "https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
 
+local function installer_dir()
+  return "/installer"
+end
+
 local function manifest_path()
   return fs.combine(installer_dir(), "manifest.lua")
 end
@@ -320,7 +324,31 @@ local function main()
   center_print(6, "Reboot the computer to launch the selected role.")
   center_print(8, "Installer will now exit.")
  end
- 
+
+local function verify_installer_functions()
+  local required = {
+    installer_dir = installer_dir,
+    manifest_path = manifest_path,
+    write_file = write_file,
+    download_manifest = download_manifest,
+    load_manifest = load_manifest,
+    build_role_targets = build_role_targets,
+    select_role = select_role,
+    confirm_role = confirm_role,
+    resolve_target = resolve_target,
+    write_startup = write_startup,
+    main = main,
+  }
+
+  for name, fn in pairs(required) do
+    if type(fn) ~= "function" then
+      error("Installer missing required function: " .. name)
+    end
+  end
+end
+
+verify_installer_functions()
+
 local ok, err = pcall(main)
 if not ok then
   term.clear()
