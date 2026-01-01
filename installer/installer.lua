@@ -8,7 +8,7 @@ local ROLE_SOURCE_FILES = {
   ENERGY       = "src/node/energy_node.lua",
   FUEL         = "src/node/fuel_node.lua",
   REPROCESSING = "src/node/reprocessing_node.lua",
- }
+}
 
 local ROLE_LIST = {
   { name = "MASTER",       description = "Cluster UI and coordinator" },
@@ -16,8 +16,11 @@ local ROLE_LIST = {
   { name = "ENERGY",       description = "Manages power transfer" },
   { name = "FUEL",         description = "Handles fuel processing" },
   { name = "REPROCESSING", description = "Supervises reprocessing" },
- }
- 
+}
+
+local DEFAULT_MANIFEST_URL = "https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
+local MANIFEST_PATH = "/installer/manifest.lua"
+
 local function center_print(y, text)
   local w = term.getSize()
   local x = math.max(1, math.floor((w - #text) / 2) + 1)
@@ -25,8 +28,13 @@ local function center_print(y, text)
   term.write(text)
 end
 
-local MANIFEST_URL = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
-local MANIFEST_PATH = "/installer/manifest.lua"
+local function installer_dir()
+  return "/installer"
+end
+
+local function manifest_path()
+  return fs.combine(installer_dir(), "manifest.lua")
+end
 
 local function write_file(path, contents)
   local dir = fs.getDir(path)
@@ -36,7 +44,7 @@ local function write_file(path, contents)
 
   local handle = fs.open(path, "w")
   if not handle then
-    return false, "Unable to open manifest for writing: " .. path
+    return false, "Unable to open file for writing: " .. path
   end
   handle.write(contents)
   handle.close()
@@ -44,7 +52,7 @@ local function write_file(path, contents)
 end
 
 local function download_manifest()
-  local handle, err = http.get(MANIFEST_URL)
+  local handle, err = http.get(DEFAULT_MANIFEST_URL)
   if not handle then
     return nil, "Failed to download manifest: " .. tostring(err)
   end
@@ -83,52 +91,6 @@ local function download_manifest()
   return MANIFEST_PATH
 end
 
-local MANIFEST_URL = "https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
-
-local function installer_dir()
-  return "/installer"
-end
-
-local function manifest_path()
-  return fs.combine(installer_dir(), "manifest.lua")
-end
-
-local function write_file(path, contents)
-  local dir = fs.getDir(path)
-  if dir and dir ~= "" and not fs.exists(dir) then
-    fs.makeDir(dir)
-  end
-
-  local handle = fs.open(path, "w")
-  if not handle then
-    return false, "Unable to open manifest for writing: " .. path
-  end
-  handle.write(contents)
-  handle.close()
-  return true
-end
-
-local function download_manifest()
-  local handle, err = http.get(MANIFEST_URL)
-  if not handle then
-    return nil, "Failed to download manifest: " .. tostring(err)
-  end
-
-  local content = handle.readAll() or ""
-  handle.close()
-
-  local ok, write_err = write_file(manifest_path(), content)
-  if not ok then
-    return nil, write_err
-  end
-
-  if not fs.exists(manifest_path()) then
-    return nil, "Manifest missing after download"
-  end
-
-  return manifest_path()
-end
-
 local function load_manifest()
   fs.delete(manifest_path())
   local path, download_err = download_manifest()
@@ -143,7 +105,69 @@ local function load_manifest()
   if type(manifest) ~= "table" or type(manifest.files) ~= "table" then
     return nil, "Manifest missing file list"
   end
+  manifest.base_url = manifest.base_url or "https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main"
   return manifest
+end
+
+local function download_file(base_url, src, dst)
+  local url = string.format("%s/%s", base_url, src)
+  local handle, err = http.get(url)
+  if not handle then
+    return nil, "Failed to download " .. src .. ": " .. tostring(err)
+  end
+
+  local status = handle.getResponseCode and handle.getResponseCode() or 0
+  if status == 404 then
+    handle.close()
+    return nil, "File not found (404): " .. src
+  elseif status >= 400 or status < 200 then
+    handle.close()
+    return nil, "Download failed for " .. src .. " with status " .. tostring(status)
+  end
+
+  local contents = handle.readAll() or ""
+  handle.close()
+
+  if contents == "" then
+    return nil, "Empty content for " .. src
+  end
+
+  local ok, write_err = write_file(dst, contents)
+  if not ok then
+    return nil, write_err
+  end
+
+  return dst
+end
+
+local function copy_file(src, dst)
+  if not fs.exists(src) then
+    return nil, "Source missing: " .. src
+  end
+
+  local handle = fs.open(src, "r")
+  if not handle then
+    return nil, "Unable to read source file: " .. src
+  end
+  local contents = handle.readAll() or ""
+  handle.close()
+
+  local ok, write_err = write_file(dst, contents)
+  if not ok then
+    return nil, write_err
+  end
+
+  return dst
+end
+
+local function install_from_manifest(manifest)
+  for _, file in ipairs(manifest.files) do
+    local path, err = download_file(manifest.base_url, file.src, file.dst)
+    if not path then
+      return nil, err
+    end
+  end
+  return true
 end
 
 local function build_role_targets(manifest)
@@ -276,8 +300,41 @@ end
   handle.close()
 end
 
+local function installer_self_check()
+  local required = {
+    download_manifest = download_manifest,
+    load_manifest = load_manifest,
+    download_file = download_file,
+    copy_file = copy_file,
+    install_from_manifest = install_from_manifest,
+    write_startup = write_startup,
+    build_role_targets = build_role_targets,
+    select_role = select_role,
+    confirm_role = confirm_role,
+    resolve_target = resolve_target,
+    draw_menu = draw_menu,
+    wait_for_key = wait_for_key,
+    is_advanced_computer = is_advanced_computer,
+    center_print = center_print,
+  }
+
+  for name, fn in pairs(required) do
+    if type(fn) ~= "function" then
+      return false, "Installer missing required function: " .. name
+    end
+  end
+
+  return true
+end
+
 local function main()
   term.setCursorBlink(false)
+
+  local ok, self_check_err = installer_self_check()
+  if not ok then
+    error(self_check_err)
+  end
+
   local manifest, manifest_err = load_manifest()
   if not manifest then
     term.clear()
@@ -285,17 +342,27 @@ local function main()
     center_print(4, manifest_err)
     center_print(6, "Press any key to exit.")
     wait_for_key()
-     return
-   end
- 
+    return
+  end
+
+  local installed, install_err = install_from_manifest(manifest)
+  if not installed then
+    term.clear()
+    center_print(2, "Installer failed to download files.")
+    center_print(4, install_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
   local role_targets = build_role_targets(manifest)
   local choice
- 
+
   while true do
     choice = select_role()
     if confirm_role(choice, role_targets) then break end
   end
- 
+
   if choice.name == "MASTER" and not is_advanced_computer() then
     term.clear()
     center_print(2, "MASTER role requires an Advanced Computer.")
@@ -304,7 +371,7 @@ local function main()
     wait_for_key()
     return
   end
- 
+
   local target, err = resolve_target(choice.name, role_targets)
   if not target then
     term.clear()
@@ -323,31 +390,7 @@ local function main()
   center_print(4, "Target file: " .. target)
   center_print(6, "Reboot the computer to launch the selected role.")
   center_print(8, "Installer will now exit.")
- end
-
-local function verify_installer_functions()
-  local required = {
-    installer_dir = installer_dir,
-    manifest_path = manifest_path,
-    write_file = write_file,
-    download_manifest = download_manifest,
-    load_manifest = load_manifest,
-    build_role_targets = build_role_targets,
-    select_role = select_role,
-    confirm_role = confirm_role,
-    resolve_target = resolve_target,
-    write_startup = write_startup,
-    main = main,
-  }
-
-  for name, fn in pairs(required) do
-    if type(fn) ~= "function" then
-      error("Installer missing required function: " .. name)
-    end
-  end
 end
-
-verify_installer_functions()
 
 local ok, err = pcall(main)
 if not ok then
