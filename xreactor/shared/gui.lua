@@ -2,6 +2,23 @@
 -- Kompatibler GUI-Shim für MASTER-UI
 -- Stellt GUI.mkRouter(...) bereit und bietet einfache Zeichen-Helfer.
 
+local text_utils = nil
+do
+  local ok, mod = pcall(require, "xreactor.shared.text")
+  if ok and mod then text_utils = mod end
+  if not text_utils and fs and fs.exists and fs.exists("/xreactor/shared/text.lua") then
+    local ok2, mod2 = pcall(dofile, "/xreactor/shared/text.lua")
+    if ok2 and mod2 then text_utils = mod2 end
+  end
+end
+
+local function sanitizeText(text)
+  if text_utils and text_utils.sanitizeText then
+    return text_utils.sanitizeText(text)
+  end
+  return tostring(text or "")
+end
+
 local M = {}
 
 -- Monitor (oder Terminal) auswählen
@@ -45,12 +62,19 @@ function M.mkRouter(opts)
   end
 
   function router:write(txt)
-    txt = tostring(txt or "")
+    txt = sanitizeText(txt)
     if self.dev.write then self.dev.write(txt) else term.write(txt) end
   end
 
   function router:blit(a,b,c)
-    if self.dev.blit then self.dev.blit(a,b,c) else self:write(a) end
+    local txt = sanitizeText(a or "")
+    local fg = b or string.rep("0", #txt)
+    local bg = c or string.rep("f", #txt)
+    if #fg < #txt then fg = fg .. string.rep(fg:sub(#fg, #fg), #txt - #fg) end
+    if #bg < #txt then bg = bg .. string.rep(bg:sub(#bg, #bg), #txt - #bg) end
+    fg = fg:sub(1, #txt)
+    bg = bg:sub(1, #txt)
+    if self.dev.blit then self.dev.blit(txt, fg, bg) else self:write(txt) end
   end
 
   function router:setTextColor(c)
@@ -63,12 +87,12 @@ function M.mkRouter(opts)
 
   function router:printAt(x,y,txt)
     self:setCursorPos(x,y)
-    self:write(txt)
+    self:write(sanitizeText(txt))
   end
 
   function router:center(y,txt)
     local w = select(1, self:getSize())
-    local s = tostring(txt or "")
+    local s = sanitizeText(txt)
     local x = math.max(1, math.floor((w - #s)/2) + 1)
     self:printAt(x,y,s)
   end

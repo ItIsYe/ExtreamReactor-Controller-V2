@@ -6,6 +6,12 @@ local PROTO = dofile("/xreactor/shared/protocol.lua")
 
 local M = {}
 
+local text_utils = dofile("/xreactor/shared/text.lua")
+local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or "") end
+local function safe_print(text)
+  print(sanitizeText(text))
+end
+
 local function tbl_copy(t) local r={}; for k,v in pairs(t or {}) do r[k]=v end; return r end
 
 local function ensure_modem(side)
@@ -48,7 +54,7 @@ function M.create(opts)
   local function emit(type_name, handler, from_id, msg)
     local ok, err = pcall(handler, msg, from_id)
     if not ok then
-      print("[dispatcher] handler error for "..tostring(type_name)..": "..tostring(err))
+      safe_print("[dispatcher] handler error for "..tostring(type_name)..": "..tostring(err))
     end
   end
 

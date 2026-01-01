@@ -8,6 +8,12 @@ local TOPBAR_CFG = { window_s = 300, health = { timeout_s = 10, warn_s = 20, cri
 
 local M = {}
 
+local text_utils = dofile("/xreactor/shared/text.lua")
+local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or "") end
+local function safe_print(text)
+  print(sanitizeText(text))
+end
+
 local function noop() end
 
 function M.create(opts)
@@ -75,7 +81,7 @@ function M.create(opts)
   local function start()
     if GUI and mon then build_gui() else
       term.clear(); term.setCursorPos(1,1)
-      print("Alarm ▢ Master (TUI) ready")
+      safe_print("Alarm ▢ Master (TUI) ready")
     end
     request_redraw('start')
   end

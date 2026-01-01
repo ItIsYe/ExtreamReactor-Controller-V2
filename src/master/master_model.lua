@@ -7,6 +7,12 @@ local PROTO = dofile('/xreactor/shared/protocol.lua')
 local Identity = dofile('/xreactor/shared/identity.lua')
 local StateStore = dofile('/xreactor/shared/local_state_store.lua')
 
+local text_utils = dofile('/xreactor/shared/text.lua')
+local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or '') end
+local function safe_print(text)
+  print(sanitizeText(text))
+end
+
 local function now_s() return os.epoch('utc')/1000 end
 local function n0(x,d) x=tonumber(x); if x==nil then return d or 0 end; return x end
 local function normalize_severity(raw)
@@ -125,7 +131,7 @@ function M.create(dispatcher, opts)
 
   local function log_persist_warning(reason)
     if not reason then return end
-    print(string.format('[master_model] persisted alarm state invalid (%s); using defaults', tostring(reason)))
+    safe_print(string.format('[master_model] persisted alarm state invalid (%s); using defaults', tostring(reason)))
   end
 
   -- Reload persisted alarm view data on startup; warn and default if the snapshot is corrupt.

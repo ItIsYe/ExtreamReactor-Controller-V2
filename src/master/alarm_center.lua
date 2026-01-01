@@ -6,6 +6,12 @@ local PROTO = dofile("/xreactor/shared/protocol.lua")
 local Dispatcher = dofile("/xreactor/shared/network_dispatcher.lua")
 local Model = dofile("/xreactor/master/master_model.lua")
 
+local text_utils = dofile("/xreactor/shared/text.lua")
+local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or "") end
+local function safe_print(text)
+  print(sanitizeText(text))
+end
+
 local CFG=(function() local t={ auth_token="xreactor", modem_side="right", ui={text_scale=0.5} }
   if fs.exists("/xreactor/config_alarm.lua") then local ok,c=pcall(dofile,"/xreactor/config_alarm.lua"); if ok and type(c)=="table" then
     t.auth_token=c.auth_token or t.auth_token; t.modem_side=c.modem_side or t.modem_side; if c.ui then t.ui=c.ui end
@@ -61,9 +67,9 @@ local function tui_loop()
   if GUI and MON then return end
   while true do
     term.clear(); term.setCursorPos(1,1)
-    print("Alarm ▢ Center  "..os.date("%H:%M:%S")); print(string.rep("-",78))
-    for _,row in ipairs(MODEL:get_alarm_rows()) do print(row.text) end
-    print(string.rep("-",78)); print("[C] Clear  [H] Home  [Q] Quit")
+    safe_print("Alarm ▢ Center  "..os.date("%H:%M:%S")); safe_print(string.rep("-",78))
+    for _,row in ipairs(MODEL:get_alarm_rows()) do safe_print(row.text) end
+    safe_print(string.rep("-",78)); safe_print("[C] Clear  [H] Home  [Q] Quit")
     local e,k=os.pullEvent("key")
     if k==keys.q then return elseif k==keys.c then MODEL:ack_alarms() elseif k==keys.h then shell.run("/xreactor/master/master_home.lua") end
   end
@@ -89,6 +95,6 @@ local function gui_loop()
   end
 end
 
-print("Alarm Center ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
+safe_print("Alarm Center ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
 parallel.waitForAny(dispatcher_loop, gui_loop, tui_loop)
 

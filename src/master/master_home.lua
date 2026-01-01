@@ -57,6 +57,12 @@ local CORE = MasterCore.create({auth_token=CFG.auth_token, modem_side=CFG.modem_
 local MODEL = Model.create(CORE:get_dispatcher())
 local TOPBAR_CFG = { window_s = 300, health = { timeout_s = 10, warn_s = 20, crit_s = 60, min_nodes = 1 } }
 
+local text_utils = dofile("/xreactor/shared/text.lua")
+local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or "") end
+local function safe_print(text)
+  print(sanitizeText(text))
+end
+
 local function bcast(msg) return CORE:publish(msg) end
 
 -- GUI-Toolkit laden
@@ -177,7 +183,7 @@ local function create_home_panel()
 
   local function start()
     if GUI and MON then build_gui() else
-      term.clear(); term.setCursorPos(1,1); print("Master UI läuft ohne Monitor (TUI)")
+      term.clear(); term.setCursorPos(1,1); safe_print("Master UI läuft ohne Monitor (TUI)")
     end
     tick=os.startTimer(1)
     request_redraw("init")
@@ -309,5 +315,5 @@ local function start_panels()
   end
 end
 
-print("Master-Startoberfläche ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
+safe_print("Master-Startoberfläche ▢ gestartet ("..(GUI and MON and "Monitor" or "TUI")..")")
 parallel.waitForAny(dispatcher_loop, start_panels)
