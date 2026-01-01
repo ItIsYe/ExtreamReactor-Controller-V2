@@ -18,22 +18,54 @@ local ROLE_LIST = {
   { name = "REPROCESSING", description = "Supervises reprocessing" },
 }
 
-local DEFAULT_MANIFEST_URL = "https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main/installer/manifest.lua"
-local MANIFEST_PATH = "/installer/manifest.lua"
+local EMBEDDED_MANIFEST = {
+  version    = "2025-10-31-8",
+  created_at = "2025-10-31T00:00:00Z",
+  base_url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main",
+
+  files = {
+    -- Shared
+    { src = "src/shared/protocol.lua",           dst = "/xreactor/shared/protocol.lua" },
+    { src = "src/shared/identity.lua",           dst = "/xreactor/shared/identity.lua" },
+    { src = "src/shared/log.lua",                dst = "/xreactor/shared/log.lua" },
+    { src = "src/shared/topbar.lua",             dst = "/xreactor/shared/topbar.lua" },
+    { src = "src/shared/network_dispatcher.lua", dst = "/xreactor/shared/network_dispatcher.lua" },
+    { src = "src/shared/node_state_machine.lua", dst = "/xreactor/shared/node_state_machine.lua" },
+    { src = "src/shared/node_runtime.lua",       dst = "/xreactor/shared/node_runtime.lua" },
+
+    -- Node Core
+    { src = "src/node/node_core.lua",            dst = "/xreactor/node/node_core.lua" },
+
+    -- Master UI
+    { src = "src/master/master_core.lua",        dst = "/xreactor/master/master_core.lua" },
+    { src = "src/master/master_model.lua",       dst = "/xreactor/master/master_model.lua" },
+    { src = "src/master/master_home.lua",        dst = "/xreactor/master/master_home.lua" },
+    { src = "src/master/fuel_panel.lua",         dst = "/xreactor/master/fuel_panel.lua" },
+    { src = "src/master/waste_panel.lua",        dst = "/xreactor/master/waste_panel.lua" },
+    { src = "src/master/alarm_center.lua",       dst = "/xreactor/master/alarm_center.lua" },
+    { src = "src/master/overview_panel.lua",     dst = "/xreactor/master/overview_panel.lua" },
+
+    -- Tools & UI Map
+    { src = "src/ui_map.lua",                     dst = "/xreactor/ui_map.lua" },
+    { src = "src/tools/build_ui_map.lua",         dst = "/xreactor/tools/build_ui_map.lua" },
+    { src = "src/tools/self_test.lua",            dst = "/xreactor/tools/self_test.lua" },
+
+    -- Universal Autostart
+    { src = "startup.lua",                        dst = "/startup.lua" },
+
+    -- Node Runtimes
+    { src = "src/node/reactor_node.lua",          dst = "/xreactor/node/reactor_node.lua" },
+    { src = "src/node/fuel_node.lua",             dst = "/xreactor/node/fuel_node.lua" },
+    { src = "src/node/reprocessing_node.lua",     dst = "/xreactor/node/reprocessing_node.lua" },
+    { src = "src/node/energy_node.lua",           dst = "/xreactor/node/energy_node.lua" },
+  },
+}
 
 local function center_print(y, text)
   local w = term.getSize()
   local x = math.max(1, math.floor((w - #text) / 2) + 1)
   term.setCursorPos(x, y)
   term.write(text)
-end
-
-local function installer_dir()
-  return "/installer"
-end
-
-local function manifest_path()
-  return fs.combine(installer_dir(), "manifest.lua")
 end
 
 local function write_file(path, contents)
@@ -51,61 +83,29 @@ local function write_file(path, contents)
   return true
 end
 
-local function download_manifest()
-  local handle, err = http.get(DEFAULT_MANIFEST_URL)
-  if not handle then
-    return nil, "Failed to download manifest: " .. tostring(err)
-  end
-
-  local status = handle.getResponseCode and handle.getResponseCode() or 0
-  if status == 404 then
-    handle.close()
-    return nil, "Manifest not found (404)"
-  elseif status >= 400 or status < 200 then
-    handle.close()
-    return nil, "Manifest download failed with status " .. tostring(status)
-  end
-
-  local content = handle.readAll() or ""
-  handle.close()
-
-  if content == "" then
-    return nil, "Manifest download returned empty content"
-  end
-
-  local ok, write_err = write_file(MANIFEST_PATH, content)
-  if not ok then
-    return nil, write_err
-  end
-
-  if not fs.exists(MANIFEST_PATH) then
-    return nil, "Manifest missing after download"
-  end
-
-  local readable = fs.open(MANIFEST_PATH, "r")
-  if not readable then
-    return nil, "Manifest not readable after download"
-  end
-  readable.close()
-
-  return MANIFEST_PATH
-end
-
 local function load_manifest()
-  fs.delete(manifest_path())
-  local path, download_err = download_manifest()
-  if not path then
-    return nil, download_err
+  if type(EMBEDDED_MANIFEST) ~= "table" then
+    return nil, "Installer manifest missing"
   end
 
-  local ok, manifest = pcall(dofile, path)
-  if not ok then
-    return nil, "Unable to load manifest: " .. tostring(manifest)
+  if type(EMBEDDED_MANIFEST.files) ~= "table" then
+    return nil, "Installer manifest missing file list"
   end
-  if type(manifest) ~= "table" or type(manifest.files) ~= "table" then
-    return nil, "Manifest missing file list"
+
+  local manifest = {
+    version    = EMBEDDED_MANIFEST.version,
+    created_at = EMBEDDED_MANIFEST.created_at,
+    base_url   = EMBEDDED_MANIFEST.base_url or "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main",
+    files      = {},
+  }
+
+  for _, file in ipairs(EMBEDDED_MANIFEST.files) do
+    if not file.src or not file.dst then
+      return nil, "Installer manifest contains an invalid file entry"
+    end
+    table.insert(manifest.files, { src = file.src, dst = file.dst })
   end
-  manifest.base_url = manifest.base_url or "https://raw.githubusercontent.com/ExtreamX/ExtreamReactor-Controller-V2/main"
+
   return manifest
 end
 
@@ -302,7 +302,6 @@ end
 
 local function installer_self_check()
   local required = {
-    download_manifest = download_manifest,
     load_manifest = load_manifest,
     download_file = download_file,
     copy_file = copy_file,
