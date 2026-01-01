@@ -2,6 +2,9 @@
 
 -- Interactive role selector for XReactor startup configuration
 
+local text_utils = dofile("src/shared/text.lua")
+local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or "") end
+
 local ROLE_SOURCE_FILES = {
   MASTER       = "src/master/master_home.lua",
   REACTOR      = "src/node/reactor_node.lua",
@@ -38,12 +41,14 @@ local REQUIRED_MASTER_DEPENDENCIES = {
   "/xreactor/master/overview_panel.lua",
   "/xreactor/master/alarm_panel.lua",
   "/xreactor/master/alarm_center.lua",
+  "/xreactor/shared/text.lua",
   "/xreactor/shared/protocol.lua",
   "/xreactor/shared/identity.lua",
   "/xreactor/shared/local_state_store.lua",
   "/xreactor/shared/network_dispatcher.lua",
   "/xreactor/shared/node_state_machine.lua",
   "/xreactor/shared/topbar.lua",
+  "/xreactor/shared/gui.lua",
 }
 
 local EMBEDDED_MANIFEST = {
@@ -53,6 +58,7 @@ local EMBEDDED_MANIFEST = {
 
   files = {
     -- Shared
+    { src = "src/shared/text.lua",              dst = "/xreactor/shared/text.lua" },
     { src = "src/shared/protocol.lua",           dst = "/xreactor/shared/protocol.lua" },
     { src = "src/shared/identity.lua",           dst = "/xreactor/shared/identity.lua" },
     { src = "src/shared/log.lua",                dst = "/xreactor/shared/log.lua" },
@@ -61,6 +67,7 @@ local EMBEDDED_MANIFEST = {
     { src = "src/shared/node_state_machine.lua", dst = "/xreactor/shared/node_state_machine.lua" },
     { src = "src/shared/node_runtime.lua",       dst = "/xreactor/shared/node_runtime.lua" },
     { src = "src/shared/local_state_store.lua",  dst = "/xreactor/shared/local_state_store.lua" },
+    { src = "xreactor/shared/gui.lua",           dst = "/xreactor/shared/gui.lua" },
 
     -- Node Core
     { src = "src/node/node_core.lua",            dst = "/xreactor/node/node_core.lua" },
@@ -92,10 +99,19 @@ local EMBEDDED_MANIFEST = {
 }
 
 local function center_print(y, text)
+  local sanitized = sanitizeText(text)
   local w = term.getSize()
-  local x = math.max(1, math.floor((w - #text) / 2) + 1)
+  local x = math.max(1, math.floor((w - #sanitized) / 2) + 1)
   term.setCursorPos(x, y)
-  term.write(text)
+  term.write(sanitized)
+end
+
+local function safe_term_write(text)
+  term.write(sanitizeText(text))
+end
+
+local function safe_print(text)
+  print(sanitizeText(text))
 end
 
 local function write_file(path, contents)
@@ -223,14 +239,24 @@ local function copy_file(src, dst)
   return dst
 end
 
-local function install_from_manifest(manifest)
+local function install_from_manifest(manifest, opts)
+  opts = opts or {}
+  local skip = opts.skip or {}
+  local updated = {}
+
   for _, file in ipairs(manifest.files) do
-    local path, err = download_file(manifest.base_url, file.src, file.dst)
-    if not path then
-      return nil, err
+    if skip[file.dst] then
+      -- Preserve user-managed files during update
+    else
+      local path, err = download_file(manifest.base_url, file.src, file.dst)
+      if not path then
+        return nil, err, updated
+      end
+      table.insert(updated, path)
     end
   end
-  return true
+
+  return true, updated
 end
 
 local function build_role_targets(manifest)
@@ -266,7 +292,7 @@ local function draw_menu(selected)
     local line = string.format("%s %s - %s", prefix, role.name, role.description)
     term.setCursorPos(3, 4 + i)
     term.clearLine()
-    term.write(line)
+    safe_term_write(line)
   end
 end
 
@@ -339,19 +365,19 @@ package.path = table.concat({
 }, ";")
 
 if not fs.exists(target) then
-  print("Startup target missing: " .. target)
+  safe_print("Startup target missing: " .. target)
   return
 end
 
 local loader = loadfile(target)
 if not loader then
-  print("Unable to load " .. target)
+  safe_print("Unable to load " .. target)
   return
 end
 
 local ok, err = pcall(loader)
 if not ok then
-  print("Error while running " .. target .. ": " .. tostring(err))
+  safe_print("Error while running " .. target .. ": " .. tostring(err))
 end
 ]], role_name, target)
 
@@ -389,6 +415,71 @@ local function installer_self_check()
   return true
 end
 
+local function detect_existing_installation(manifest)
+  if fs.exists("/xreactor") or fs.exists("/startup.lua") then
+    return true
+  end
+
+  for _, file in ipairs(manifest.files) do
+    if fs.exists(file.dst) then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function draw_mode_menu(options, selected)
+  term.clear()
+  term.setCursorPos(1, 1)
+  center_print(1, "XReactor Installer")
+  center_print(3, "Use ↑/↓ or W/S to choose an action")
+
+  for i, option in ipairs(options) do
+    local prefix = "[ ]"
+    if i == selected then prefix = "[>]" end
+    term.setCursorPos(3, 4 + i)
+    term.clearLine()
+    safe_term_write(string.format("%s %s", prefix, option.label))
+  end
+end
+
+local function select_mode(installed)
+  if not installed then
+    return "install"
+  end
+
+  local options = {
+    { key = "install", label = "Install (fresh)" },
+    { key = "update",  label = "Update (preserve config)" },
+  }
+
+  local selected = 1
+  while true do
+    draw_mode_menu(options, selected)
+    local event, code = os.pullEvent()
+    if event == "key" then
+      if code == keys.up or code == keys.w then
+        selected = (selected == 1) and #options or (selected - 1)
+      elseif code == keys.down or code == keys.s then
+        selected = (selected == #options) and 1 or (selected + 1)
+      elseif code == keys.enter or code == keys.numPadEnter or code == keys.space then
+        return options[selected].key
+      end
+    elseif event == "char" then
+      if code == "w" then
+        selected = (selected == 1) and #options or (selected - 1)
+      elseif code == "s" then
+        selected = (selected == #options) and 1 or (selected + 1)
+      elseif code == "1" then
+        return options[1].key
+      elseif code == "2" then
+        return options[2].key
+      end
+    end
+  end
+end
+
 local function main()
   term.setCursorBlink(false)
 
@@ -414,6 +505,48 @@ local function main()
     center_print(4, manifest_missing_err)
     center_print(6, "Press any key to exit.")
     wait_for_key()
+    return
+  end
+
+  local already_installed = detect_existing_installation(manifest)
+  local mode = select_mode(already_installed)
+
+  if mode == "update" then
+    local skip_paths = {}
+    if fs.exists("/startup.lua") then
+      skip_paths["/startup.lua"] = true
+    end
+
+    local installed, install_err, updated = install_from_manifest(manifest, { skip = skip_paths })
+    if not installed then
+      term.clear()
+      center_print(2, "Update failed to download files.")
+      center_print(4, install_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    term.clear()
+    center_print(2, "Update complete.")
+    center_print(4, "Updated files:")
+    local line = 5
+    for _, path in ipairs(updated) do
+      term.setCursorPos(4, line)
+      term.clearLine()
+      safe_term_write(path)
+      line = line + 1
+      if line > select(2, term.getSize()) then break end
+    end
+
+    if #updated == 0 then
+      term.setCursorPos(4, line)
+      safe_term_write("No files needed updating.")
+    end
+
+    term.setCursorPos(1, line + 2)
+    center_print(line + 2, "Existing configuration preserved.")
+    center_print(line + 4, "Installer will now exit.")
     return
   end
 

@@ -8,6 +8,12 @@ local IDENTM    = dofile('/xreactor/shared/identity.lua')
 local Dispatcher= dofile('/xreactor/shared/network_dispatcher.lua')
 local NodeState = dofile('/xreactor/shared/node_state_machine.lua')
 
+local text_utils = dofile('/xreactor/shared/text.lua')
+local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or '') end
+local function safe_print(text)
+  print(sanitizeText(text))
+end
+
 local function now_s() return os.epoch('utc')/1000 end
 
 local Runtime = {}
@@ -48,7 +54,7 @@ function Runtime.create(opts)
   local network_ok = dispatcher.is_online and dispatcher:is_online()
 
   local function log(msg)
-    print(('[%s] %s'):format(ident.hostname or ident.id or 'node', tostring(msg)))
+    safe_print(('[%s] %s'):format(ident.hostname or ident.id or 'node', tostring(msg)))
   end
 
   local function reset_election()
@@ -185,8 +191,8 @@ function Runtime.create(opts)
 
   local function event_loop()
     term.clear(); term.setCursorPos(1,1)
-    print(('XReactor Node [%s]'):format(ident.hostname or '?'))
-    print('Heartbeat + HELLO aktiv. Warte auf Events…')
+    safe_print(('XReactor Node [%s]'):format(ident.hostname or '?'))
+    safe_print('Heartbeat + HELLO aktiv. Warte auf Events…')
 
     reset_timer('hello', 0.1)
     reset_timer('hb', HB_INTERVAL)
