@@ -2,7 +2,7 @@
 -- ExtreamReactor-Controller-V2 — Manifest (AUTOSTART + Nodes)
 --========================================================
 return {
-  version    = "2025-10-31-8",
+  version    = "2025-10-31-9",
   created_at = "2025-10-31T00:00:00Z",
   base_url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main",
 
@@ -15,6 +15,7 @@ return {
     { src = "src/shared/network_dispatcher.lua",dst = "/xreactor/shared/network_dispatcher.lua" },
     { src = "src/shared/node_state_machine.lua",dst = "/xreactor/shared/node_state_machine.lua" },
     { src = "src/shared/node_runtime.lua",      dst = "/xreactor/shared/node_runtime.lua" },
+    { src = "src/shared/local_state_store.lua", dst = "/xreactor/shared/local_state_store.lua" },
 
     -- Node Core
     { src = "src/node/node_core.lua",           dst = "/xreactor/node/node_core.lua" },
@@ -26,6 +27,7 @@ return {
     { src = "src/master/fuel_panel.lua",     dst = "/xreactor/master/fuel_panel.lua" },
     { src = "src/master/waste_panel.lua",    dst = "/xreactor/master/waste_panel.lua" },
     { src = "src/master/alarm_center.lua",   dst = "/xreactor/master/alarm_center.lua" },
+    { src = "src/master/alarm_panel.lua",    dst = "/xreactor/master/alarm_panel.lua" },
     { src = "src/master/overview_panel.lua", dst = "/xreactor/master/overview_panel.lua" },
 
     -- Tools & UI Map

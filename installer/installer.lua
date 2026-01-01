@@ -18,8 +18,36 @@ local ROLE_LIST = {
   { name = "REPROCESSING", description = "Supervises reprocessing" },
 }
 
+local REQUIRED_MASTER_FILES = {
+  { src = "src/master/master_home.lua",  dst = "/xreactor/master/master_home.lua"  },
+  { src = "src/master/master_core.lua",  dst = "/xreactor/master/master_core.lua"  },
+  { src = "src/master/master_model.lua", dst = "/xreactor/master/master_model.lua" },
+  { src = "src/master/fuel_panel.lua",   dst = "/xreactor/master/fuel_panel.lua"   },
+  { src = "src/master/waste_panel.lua",  dst = "/xreactor/master/waste_panel.lua"  },
+  { src = "src/master/overview_panel.lua", dst = "/xreactor/master/overview_panel.lua" },
+  { src = "src/master/alarm_panel.lua",  dst = "/xreactor/master/alarm_panel.lua"  },
+  { src = "src/master/alarm_center.lua", dst = "/xreactor/master/alarm_center.lua" },
+}
+
+local REQUIRED_MASTER_DEPENDENCIES = {
+  "/xreactor/master/master_home.lua",
+  "/xreactor/master/master_core.lua",
+  "/xreactor/master/master_model.lua",
+  "/xreactor/master/fuel_panel.lua",
+  "/xreactor/master/waste_panel.lua",
+  "/xreactor/master/overview_panel.lua",
+  "/xreactor/master/alarm_panel.lua",
+  "/xreactor/master/alarm_center.lua",
+  "/xreactor/shared/protocol.lua",
+  "/xreactor/shared/identity.lua",
+  "/xreactor/shared/local_state_store.lua",
+  "/xreactor/shared/network_dispatcher.lua",
+  "/xreactor/shared/node_state_machine.lua",
+  "/xreactor/shared/topbar.lua",
+}
+
 local EMBEDDED_MANIFEST = {
-  version    = "2025-10-31-8",
+  version    = "2025-10-31-9",
   created_at = "2025-10-31T00:00:00Z",
   base_url   = "https://raw.githubusercontent.com/ItIsYe/ExtreamReactor-Controller-V2/main",
 
@@ -32,6 +60,7 @@ local EMBEDDED_MANIFEST = {
     { src = "src/shared/network_dispatcher.lua", dst = "/xreactor/shared/network_dispatcher.lua" },
     { src = "src/shared/node_state_machine.lua", dst = "/xreactor/shared/node_state_machine.lua" },
     { src = "src/shared/node_runtime.lua",       dst = "/xreactor/shared/node_runtime.lua" },
+    { src = "src/shared/local_state_store.lua",  dst = "/xreactor/shared/local_state_store.lua" },
 
     -- Node Core
     { src = "src/node/node_core.lua",            dst = "/xreactor/node/node_core.lua" },
@@ -43,6 +72,7 @@ local EMBEDDED_MANIFEST = {
     { src = "src/master/fuel_panel.lua",         dst = "/xreactor/master/fuel_panel.lua" },
     { src = "src/master/waste_panel.lua",        dst = "/xreactor/master/waste_panel.lua" },
     { src = "src/master/alarm_center.lua",       dst = "/xreactor/master/alarm_center.lua" },
+    { src = "src/master/alarm_panel.lua",        dst = "/xreactor/master/alarm_panel.lua" },
     { src = "src/master/overview_panel.lua",     dst = "/xreactor/master/overview_panel.lua" },
 
     -- Tools & UI Map
@@ -107,6 +137,39 @@ local function load_manifest()
   end
 
   return manifest
+end
+
+local function ensure_manifest_has_master_files(manifest)
+  local missing = {}
+  for _, required in ipairs(REQUIRED_MASTER_FILES) do
+    local found = false
+    for _, file in ipairs(manifest.files) do
+      if file.src == required.src and file.dst == required.dst then
+        found = true
+        break
+      end
+    end
+    if not found then table.insert(missing, required.src) end
+  end
+
+  if #missing > 0 then
+    return false, "Installer manifest missing master files: " .. table.concat(missing, ", ")
+  end
+
+  return true
+end
+
+local function verify_master_installation()
+  local missing = {}
+  for _, path in ipairs(REQUIRED_MASTER_DEPENDENCIES) do
+    if not fs.exists(path) then table.insert(missing, path) end
+  end
+
+  if #missing > 0 then
+    return false, "Missing master files after install: " .. table.concat(missing, ", ")
+  end
+
+  return true
 end
 
 local function download_file(base_url, src, dst)
@@ -344,11 +407,31 @@ local function main()
     return
   end
 
+  local manifest_ok, manifest_missing_err = ensure_manifest_has_master_files(manifest)
+  if not manifest_ok then
+    term.clear()
+    center_print(2, "Installer manifest invalid.")
+    center_print(4, manifest_missing_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
   local installed, install_err = install_from_manifest(manifest)
   if not installed then
     term.clear()
     center_print(2, "Installer failed to download files.")
     center_print(4, install_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
+  local master_ok, master_err = verify_master_installation()
+  if not master_ok then
+    term.clear()
+    center_print(2, "Master installation incomplete.")
+    center_print(4, master_err)
     center_print(6, "Press any key to exit.")
     wait_for_key()
     return
