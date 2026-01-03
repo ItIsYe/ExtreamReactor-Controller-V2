@@ -27,6 +27,45 @@ end
 
 local M = {}
 
+-- ===== Monitor autoscale =====
+local function clamp(v, lo, hi)
+  if v < lo then return lo end
+  if v > hi then return hi end
+  return v
+end
+
+--- Automatically set text scale so a target character resolution fits on the monitor.
+-- @param dev monitor/terminal peripheral
+-- @param opts table {target_w, target_h, min_scale, max_scale, step}
+-- @return number|nil applied scale or nil if unavailable
+function M.autoscale(dev, opts)
+  opts = opts or {}
+  if not (dev and dev.setTextScale and dev.getSize) then return nil end
+
+  local target_w = tonumber(opts.target_w or (opts.target and opts.target.w)) or 80
+  local target_h = tonumber(opts.target_h or (opts.target and opts.target.h)) or 25
+  local min_scale = clamp(tonumber(opts.min_scale or opts.min) or 0.5, 0.5, 5)
+  local max_scale = clamp(tonumber(opts.max_scale or opts.max) or 5, min_scale, 5)
+  local step = tonumber(opts.step) or 0.5
+  if step <= 0 then step = 0.5 end
+
+  local applied = nil
+  local s = max_scale
+  while s >= min_scale - 1e-6 do
+    pcall(dev.setTextScale, s)
+    local w, h = dev.getSize()
+    if w >= target_w and h >= target_h then applied = s; break end
+    s = s - step
+  end
+
+  if not applied then
+    applied = min_scale
+    pcall(dev.setTextScale, applied)
+  end
+
+  return applied
+end
+
 -- ===== Primitive UI components =====
 local function mkLabel(x, y, text, opts)
   local props = {
@@ -171,6 +210,12 @@ end
 function M.mkRouter(opts)
   opts = opts or {}
   local dev = resolveMonitor(opts.monitorName or opts.monitor_side)
+
+  if opts.autoscale then
+    local cfg = opts.autoscale
+    if cfg == true then cfg = {} end
+    pcall(M.autoscale, dev, cfg)
+  end
 
   local router = { dev = dev, screens = {}, current = nil }
 

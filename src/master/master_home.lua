@@ -104,6 +104,7 @@ local function load_ui_map()
   return {monitors={}, autoscale={enabled=false}}
 end
 local UIMAP=load_ui_map()
+local AUTOSCALE_CFG = UIMAP.autoscale or { enabled = false }
 local function detect_monitors()
   local monitors = {}
   for _, name in ipairs(peripheral.getNames()) do
@@ -117,10 +118,26 @@ local function detect_monitors()
   return monitors
 end
 
+local function apply_autoscale(mon)
+  if not (AUTOSCALE_CFG.enabled and GUI and GUI.autoscale) then return false end
+  GUI.autoscale(mon, {
+    target_w = AUTOSCALE_CFG.target_w or (AUTOSCALE_CFG.target and AUTOSCALE_CFG.target.w) or 80,
+    target_h = AUTOSCALE_CFG.target_h or (AUTOSCALE_CFG.target and AUTOSCALE_CFG.target.h) or 25,
+    min_scale = AUTOSCALE_CFG.min_scale,
+    max_scale = AUTOSCALE_CFG.max_scale,
+    step = AUTOSCALE_CFG.step,
+  })
+  return true
+end
+
 local function prepare_monitor(mon, name)
   local entry = (UIMAP.monitors or {})[name]
   local scale = entry and entry.scale or (CFG.ui and CFG.ui.text_scale)
-  if scale then pcall(mon.setTextScale, tonumber(scale) or 1.0) end
+  if scale then
+    pcall(mon.setTextScale, tonumber(scale) or 1.0)
+  elseif apply_autoscale(mon) then
+    -- autoscale handled
+  end
   if mon.setBackgroundColor then pcall(mon.setBackgroundColor, colors.black) end
   if mon.clear then pcall(mon.clear) end
   if mon.setCursorPos then pcall(mon.setCursorPos, 1, 1) end
