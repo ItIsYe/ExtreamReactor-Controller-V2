@@ -27,6 +27,131 @@ end
 
 local M = {}
 
+-- ===== Primitive UI components =====
+local function mkLabel(x, y, text, opts)
+  local props = {
+    x = x or 1,
+    y = y or 1,
+    text = text or "",
+    color = opts and opts.color or colors.white,
+    bg = opts and opts.bg or nil,
+  }
+
+  local el = { kind = "label", props = props }
+
+  function el:draw(router)
+    if not router then return end
+    if self.props.bg and router.setBackgroundColor then router:setBackgroundColor(self.props.bg) end
+    if router.setTextColor and self.props.color then router:setTextColor(self.props.color) end
+    router:printAt(self.props.x, self.props.y, self.props.text)
+  end
+
+  return el
+end
+
+local function mkButton(x, y, w, h, label, handler, bg)
+  local props = {
+    x = x or 1,
+    y = y or 1,
+    w = math.max(1, w or 1),
+    h = math.max(1, h or 1),
+    label = label or "",
+    bg = bg or colors.gray,
+  }
+
+  local el = { kind = "button", props = props, onClick = handler }
+
+  local function contains(px, py)
+    return px >= props.x and px <= props.x + props.w - 1 and py >= props.y and py <= props.y + props.h - 1
+  end
+
+  function el:draw(router)
+    if not router then return end
+    if router.setBackgroundColor then router:setBackgroundColor(props.bg) end
+    if router.setTextColor then router:setTextColor(colors.white) end
+    for dy = 0, props.h - 1 do
+      router:setCursorPos(props.x, props.y + dy)
+      router:write(string.rep(" ", props.w))
+    end
+    local lbl = sanitizeText(props.label)
+    local lx = math.max(props.x, props.x + math.floor((props.w - #lbl) / 2))
+    local ly = props.y + math.floor((props.h - 1) / 2)
+    router:printAt(lx, ly, lbl)
+  end
+
+  function el:handleEvent(ev)
+    local et = ev and ev[1]
+    if et == "monitor_touch" then
+      local px, py = ev[3], ev[4]
+      if contains(px, py) and type(self.onClick) == "function" then pcall(self.onClick) end
+    elseif et == "mouse_click" then
+      local px, py = ev[3], ev[4]
+      if contains(px, py) and type(self.onClick) == "function" then pcall(self.onClick) end
+    end
+  end
+
+  return el
+end
+
+local function mkList(x, y, w, h, items)
+  local props = {
+    x = x or 1,
+    y = y or 1,
+    w = math.max(1, w or 1),
+    h = math.max(1, h or 1),
+    items = items or {},
+  }
+
+  local el = { kind = "list", props = props }
+
+  function el:draw(router)
+    if not router then return end
+    for i = 1, props.h do
+      local entry = props.items[i]
+      local txt = ""
+      local color = colors.white
+      if type(entry) == "table" then
+        txt = sanitizeText(entry.text or "")
+        color = entry.color or color
+      else
+        txt = sanitizeText(entry)
+      end
+
+      if router.setTextColor then router:setTextColor(color) end
+      if router.setCursorPos then router:setCursorPos(props.x, props.y + i - 1) end
+      router:write(string.sub(txt .. string.rep(" ", props.w), 1, props.w))
+    end
+  end
+
+  return el
+end
+
+-- ===== Screen / Router primitives =====
+local function mkScreen(id, title)
+  local scr = { id = id or "screen", title = title or id or "", elements = {} }
+
+  function scr:add(el)
+    table.insert(self.elements, el)
+    return el
+  end
+
+  function scr:draw(router)
+    if not router then return end
+    router:clear()
+    for _, el in ipairs(self.elements) do
+      if el and el.draw then el:draw(router) end
+    end
+  end
+
+  function scr:handleEvent(ev)
+    for _, el in ipairs(self.elements) do
+      if el and el.handleEvent then el:handleEvent(ev) end
+    end
+  end
+
+  return scr
+end
+
 -- Monitor (oder Terminal) auswählen
 local function resolveMonitor(name)
   local dev
@@ -47,7 +172,7 @@ function M.mkRouter(opts)
   opts = opts or {}
   local dev = resolveMonitor(opts.monitorName or opts.monitor_side)
 
-  local router = { dev = dev }
+  local router = { dev = dev, screens = {}, current = nil }
 
   function router:setTextScale(s)
     if self.dev.setTextScale then pcall(self.dev.setTextScale, s or 0.5) end
@@ -103,8 +228,34 @@ function M.mkRouter(opts)
     self:printAt(x,y,s)
   end
 
+  function router:register(screen)
+    if screen and screen.id then self.screens[screen.id] = screen end
+  end
+
+  function router:show(id)
+    if type(id) == "table" then
+      self.current = id
+    else
+      self.current = self.screens[id]
+    end
+    self:draw()
+  end
+
+  function router:draw()
+    if self.current and self.current.draw then self.current:draw(self) end
+  end
+
+  function router:handleEvent(ev)
+    if self.current and self.current.handleEvent then self.current:handleEvent(ev) end
+  end
+
   return router
 end
+
+M.mkScreen = mkScreen
+M.mkLabel  = mkLabel
+M.mkButton = mkButton
+M.mkList   = mkList
 
 -- ===== Kompatibilitäts-Helfer auf einem Default-Router =====
 local _default = M.mkRouter({})

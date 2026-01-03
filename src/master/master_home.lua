@@ -83,6 +83,21 @@ local GUI; do
   if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end
 end
 
+local function ensure_gui_factory()
+  if not GUI then
+    error("Master UI aborted: missing /xreactor/shared/gui.lua", 0)
+  end
+
+  local missing = {}
+  for _,fn in ipairs({"mkRouter","mkScreen","mkLabel","mkButton","mkList"}) do
+    if type(GUI[fn]) ~= "function" then table.insert(missing, fn) end
+  end
+
+  if #missing > 0 then
+    error("Master UI aborted: GUI shim missing helpers -> " .. table.concat(missing, ", "), 0)
+  end
+end
+
 -- Monitor nach Rolle auswählen
 local function load_ui_map()
   if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end
@@ -178,6 +193,7 @@ local function create_home_panel()
 
   local function build_gui()
     if not (GUI and MON) then return end
+    ensure_gui_factory()
     router=GUI.mkRouter({monitorName=peripheral.getName(MON)})
     scr=GUI.mkScreen("home","XReactor ▢ Master")
 
