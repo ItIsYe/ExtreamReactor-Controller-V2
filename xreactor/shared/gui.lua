@@ -2,14 +2,20 @@
 -- Kompatibler GUI-Shim für MASTER-UI
 -- Stellt GUI.mkRouter(...) bereit und bietet einfache Zeichen-Helfer.
 
+local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
 local text_utils = nil
+
 do
-  local ok, mod = pcall(require, "xreactor.shared.text")
-  if ok and mod then text_utils = mod end
-  if not text_utils and fs and fs.exists and fs.exists("/xreactor/shared/text.lua") then
-    local ok2, mod2 = pcall(dofile, "/xreactor/shared/text.lua")
-    if ok2 and mod2 then text_utils = mod2 end
+  if not (fs and fs.exists and fs.exists(TEXT_UTILS_PATH)) then
+    error("Unable to locate text utilities (text.lua) at " .. TEXT_UTILS_PATH)
   end
+
+  local ok, mod = pcall(dofile, TEXT_UTILS_PATH)
+  if not ok or not mod then
+    error("Unable to load text utilities from " .. TEXT_UTILS_PATH .. ": " .. tostring(mod))
+  end
+
+  text_utils = mod
 end
 
 local function sanitizeText(text)

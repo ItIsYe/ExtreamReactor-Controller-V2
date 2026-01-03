@@ -5,26 +5,16 @@
 local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
 
 local function resolve_text_utils()
-  local candidates = { TEXT_UTILS_PATH }
-
-  if shell and shell.getRunningProgram and fs and fs.getDir then
-    local program_dir = fs.getDir(shell.getRunningProgram())
-    if program_dir and program_dir ~= "" then
-      table.insert(candidates, fs.combine("/", fs.combine(program_dir, "src/shared/text.lua")))
-    end
+  if not (fs and fs.exists and fs.exists(TEXT_UTILS_PATH)) then
+    error("Unable to locate text utilities (text.lua) at " .. TEXT_UTILS_PATH)
   end
 
-  table.insert(candidates, "/src/shared/text.lua")
-
-  for _, path in ipairs(candidates) do
-    if path and fs.exists(path) then
-      local ok, mod = pcall(dofile, path)
-      if ok and mod then return mod end
-      error("Unable to load text utilities from " .. path .. ": " .. tostring(mod))
-    end
+  local ok, mod = pcall(dofile, TEXT_UTILS_PATH)
+  if not ok or not mod then
+    error("Unable to load text utilities from " .. TEXT_UTILS_PATH .. ": " .. tostring(mod))
   end
 
-  error("Unable to locate text utilities (text.lua). Tried: " .. table.concat(candidates, ", "))
+  return mod
 end
 
 local text_utils = resolve_text_utils()
