@@ -31,7 +31,12 @@ local function noop() end
 function M.create(opts)
   local cfg = opts or {}
   local mon = assert(cfg.monitor, "monitor required")
-  if mon and not GUI then pcall(mon.setTextScale, 0.5) end
+  local fixed_scale = cfg.text_scale
+  if GUI and GUI.apply_text_scale then
+    GUI.apply_text_scale(mon, { name = peripheral.getName(mon), fixed_scale = fixed_scale })
+  elseif mon and not GUI then
+    pcall(mon.setTextScale, 0.5)
+  end
   local on_home = cfg.on_home or noop
   local on_filter_change = cfg.on_filter_change or noop
   local on_refresh = cfg.on_refresh or noop

@@ -34,36 +34,62 @@ local function clamp(v, lo, hi)
   return v
 end
 
---- Automatically set text scale so a target character resolution fits on the monitor.
+local function round_to_step(value, step)
+  if not step or step <= 0 then return value end
+  return math.floor((value / step) + 0.5) * step
+end
+
+--- Compute and apply a readable text scale based on the monitor resolution.
+-- Prefers larger text on large displays while keeping columns/rows within a
+-- comfortable range. Scale is clamped to CC:Tweaked limits and reapplied on
+-- demand.
 -- @param dev monitor/terminal peripheral
--- @param opts table {target_w, target_h, min_scale, max_scale, step}
+-- @param opts table {name, fixed_scale, min_cols, max_cols, min_rows, max_rows, min_scale, max_scale, step}
 -- @return number|nil applied scale or nil if unavailable
-function M.autoscale(dev, opts)
+function M.apply_text_scale(dev, opts)
   opts = opts or {}
   if not (dev and dev.setTextScale and dev.getSize) then return nil end
 
-  local target_w = tonumber(opts.target_w or (opts.target and opts.target.w)) or 80
-  local target_h = tonumber(opts.target_h or (opts.target and opts.target.h)) or 25
-  local min_scale = clamp(tonumber(opts.min_scale or opts.min) or 0.5, 0.5, 5)
-  local max_scale = clamp(tonumber(opts.max_scale or opts.max) or 5, min_scale, 5)
+  local min_cols = tonumber(opts.min_cols) or 40
+  local max_cols = tonumber(opts.max_cols) or 80
+  local min_rows = tonumber(opts.min_rows) or 15
+  local max_rows = tonumber(opts.max_rows) or 30
+  local min_scale = clamp(tonumber(opts.min_scale) or 0.5, 0.5, 5)
+  local max_scale = clamp(tonumber(opts.max_scale) or 5, min_scale, 5)
   local step = tonumber(opts.step) or 0.5
   if step <= 0 then step = 0.5 end
 
-  local applied = nil
-  local s = max_scale
-  while s >= min_scale - 1e-6 do
-    pcall(dev.setTextScale, s)
-    local w, h = dev.getSize()
-    if w >= target_w and h >= target_h then applied = s; break end
-    s = s - step
+  local fixed = opts.fixed_scale
+  if fixed then
+    local forced = clamp(tonumber(fixed) or 1.0, min_scale, max_scale)
+    pcall(dev.setTextScale, forced)
+    return forced
   end
 
-  if not applied then
-    applied = min_scale
-    pcall(dev.setTextScale, applied)
-  end
+  pcall(dev.setTextScale, 1)
+  local base_w, base_h = dev.getSize()
+  if not (base_w and base_h) then return nil end
 
-  return applied
+  local target_w = base_w
+  if base_w > max_cols then target_w = max_cols end
+  if base_w < min_cols then target_w = base_w end
+
+  local target_h = base_h
+  if base_h > max_rows then target_h = max_rows end
+  if base_h < min_rows then target_h = base_h end
+
+  local scale_w = base_w / (target_w > 0 and target_w or base_w)
+  local scale_h = base_h / (target_h > 0 and target_h or base_h)
+  local target_scale = clamp(math.max(scale_w, scale_h, min_scale), min_scale, max_scale)
+  target_scale = clamp(round_to_step(target_scale, step), min_scale, max_scale)
+
+  pcall(dev.setTextScale, target_scale)
+  return target_scale
+end
+
+--- Backward compatible alias used by legacy callers.
+function M.autoscale(dev, opts)
+  return M.apply_text_scale(dev, opts)
 end
 
 -- ===== Primitive UI components =====
@@ -210,11 +236,24 @@ end
 function M.mkRouter(opts)
   opts = opts or {}
   local dev = resolveMonitor(opts.monitorName or opts.monitor_side)
+  local monitor_name = opts.monitorName or (peripheral and peripheral.getName and dev and peripheral.getName(dev)) or nil
+  local fixed_scale = opts.text_scale or opts.scale
+  local autoscale_opts = opts.autoscale
+  if autoscale_opts == true or autoscale_opts == nil then autoscale_opts = {} end
+  if autoscale_opts == false then autoscale_opts = nil end
 
-  if opts.autoscale then
-    local cfg = opts.autoscale
-    if cfg == true then cfg = {} end
-    pcall(M.autoscale, dev, cfg)
+  if dev then
+    pcall(M.apply_text_scale, dev, {
+      name = monitor_name,
+      fixed_scale = fixed_scale,
+      min_cols = autoscale_opts and autoscale_opts.min_cols or nil,
+      max_cols = autoscale_opts and autoscale_opts.max_cols or nil,
+      min_rows = autoscale_opts and autoscale_opts.min_rows or nil,
+      max_rows = autoscale_opts and autoscale_opts.max_rows or nil,
+      min_scale = autoscale_opts and (autoscale_opts.min_scale or autoscale_opts.min) or nil,
+      max_scale = autoscale_opts and (autoscale_opts.max_scale or autoscale_opts.max) or nil,
+      step = autoscale_opts and autoscale_opts.step or nil,
+    })
   end
 
   local router = { dev = dev, screens = {}, current = nil }
@@ -291,6 +330,22 @@ function M.mkRouter(opts)
   end
 
   function router:handleEvent(ev)
+    if not ev then return end
+    if ev[1] == "monitor_resize" or ev[1] == "monitor_resized" or ev[1] == "term_resize" then
+      if not ev[2] or not monitor_name or ev[2] == monitor_name then
+        pcall(M.apply_text_scale, self.dev, {
+          name = monitor_name,
+          fixed_scale = fixed_scale,
+          min_cols = autoscale_opts and autoscale_opts.min_cols or nil,
+          max_cols = autoscale_opts and autoscale_opts.max_cols or nil,
+          min_rows = autoscale_opts and autoscale_opts.min_rows or nil,
+          max_rows = autoscale_opts and autoscale_opts.max_rows or nil,
+          min_scale = autoscale_opts and (autoscale_opts.min_scale or autoscale_opts.min) or nil,
+          max_scale = autoscale_opts and (autoscale_opts.max_scale or autoscale_opts.max) or nil,
+          step = autoscale_opts and autoscale_opts.step or nil,
+        })
+      end
+    end
     if self.current and self.current.handleEvent then self.current:handleEvent(ev) end
   end
 

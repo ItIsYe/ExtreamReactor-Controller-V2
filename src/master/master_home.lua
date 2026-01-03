@@ -105,6 +105,15 @@ local function load_ui_map()
 end
 local UIMAP=load_ui_map()
 local AUTOSCALE_CFG = UIMAP.autoscale or { enabled = false }
+local function monitor_scale_for(name)
+  local entry = (UIMAP.monitors or {})[name]
+  return entry and entry.scale or (CFG.ui and CFG.ui.text_scale)
+end
+local function monitor_name(mon)
+  if not mon then return nil end
+  if peripheral and peripheral.getName then return peripheral.getName(mon) end
+  return nil
+end
 local function detect_monitors()
   local monitors = {}
   for _, name in ipairs(peripheral.getNames()) do
@@ -131,12 +140,21 @@ local function apply_autoscale(mon)
 end
 
 local function prepare_monitor(mon, name)
-  local entry = (UIMAP.monitors or {})[name]
-  local scale = entry and entry.scale or (CFG.ui and CFG.ui.text_scale)
-  if scale then
+  local scale = monitor_scale_for(name)
+  if GUI and GUI.apply_text_scale then
+    GUI.apply_text_scale(mon, {
+      name = name,
+      fixed_scale = scale,
+      max_cols = AUTOSCALE_CFG.max_cols or AUTOSCALE_CFG.target_w,
+      min_cols = AUTOSCALE_CFG.min_cols,
+      max_rows = AUTOSCALE_CFG.max_rows or AUTOSCALE_CFG.target_h,
+      min_rows = AUTOSCALE_CFG.min_rows,
+      min_scale = AUTOSCALE_CFG.min_scale,
+      max_scale = AUTOSCALE_CFG.max_scale,
+      step = AUTOSCALE_CFG.step,
+    })
+  elseif scale then
     pcall(mon.setTextScale, tonumber(scale) or 1.0)
-  elseif apply_autoscale(mon) then
-    -- autoscale handled
   end
   if mon.setBackgroundColor then pcall(mon.setBackgroundColor, colors.black) end
   if mon.clear then pcall(mon.clear) end
@@ -211,7 +229,12 @@ local function create_home_panel()
   local function build_gui()
     if not (GUI and MON) then return end
     ensure_gui_factory()
-    router=GUI.mkRouter({monitorName=peripheral.getName(MON)})
+    local mon_name = peripheral.getName(MON)
+    router=GUI.mkRouter({
+      monitorName = mon_name,
+      text_scale = monitor_scale_for(mon_name),
+      autoscale = AUTOSCALE_CFG,
+    })
     scr=GUI.mkScreen("home","XReactor ▢ Master")
 
     TB = Topbar.create({title="XReactor ▢ Master", monitor_name=peripheral.getName(MON), window_s=TOPBAR_CFG.window_s, show_clock=true, show_net=true, show_alarm=true, show_health=true})
@@ -260,15 +283,17 @@ local function start_panels()
   local alarm_mon = pick_monitor_for_role("alarm_center")
   local overview_mon = pick_monitor_for_role("system_overview")
 
-  local fuel_panel = fuel_mon and FuelPanel.create({monitor=fuel_mon}) or nil
-  local waste_panel = waste_mon and WastePanel.create({monitor=waste_mon}) or nil
+  local fuel_panel = fuel_mon and FuelPanel.create({monitor=fuel_mon, text_scale=monitor_scale_for(monitor_name(fuel_mon))}) or nil
+  local waste_panel = waste_mon and WastePanel.create({monitor=waste_mon, text_scale=monitor_scale_for(monitor_name(waste_mon))}) or nil
   local alarm_panel = AlarmPanel.create({
     monitor=alarm_mon,
+    text_scale=monitor_scale_for(monitor_name(alarm_mon)),
     on_home = function() shell.run("/xreactor/master/master_home.lua") end,
     on_ack = function() MODEL:ack_alarms() end,
   })
   local overview_panel = overview_mon and OverviewPanel.create({
     monitor=overview_mon,
+    text_scale=monitor_scale_for(monitor_name(overview_mon)),
     on_filter_change = function(k,v) MODEL:set_overview_filter(k,v) end,
     on_refresh = function() CORE:publish(PROTO.make_hello(IDENT)) end,
   }) or nil
