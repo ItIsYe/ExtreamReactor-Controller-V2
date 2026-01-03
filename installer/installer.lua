@@ -251,6 +251,14 @@ local function probe_remote_size(base_url, src)
 end
 
 local function download_file(base_url, src, dst)
+  local expected_size = probe_remote_size(base_url, src) or MIN_PROBE_SIZE
+  local existing_size = (fs.exists(dst) and fs.getSize and fs.getSize(dst)) or 0
+  local required = math.max(expected_size - existing_size, 0) + SAFETY_MARGIN_BYTES
+  local space_ok, space_err = ensure_free_space(required, "downloading " .. dst)
+  if not space_ok then
+    return nil, space_err
+  end
+
   local url = string.format("%s/%s", base_url, src)
   local handle, err = http.get(url)
   if not handle then
