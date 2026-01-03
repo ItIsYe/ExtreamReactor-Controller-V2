@@ -32,8 +32,18 @@ function M.create(opts)
   local cfg = opts or {}
   local mon = cfg.monitor
   local fixed_scale = cfg.text_scale
+  local function monitor_name(dev)
+    if dev and peripheral and peripheral.getName then
+      local ok, name = pcall(peripheral.getName, dev)
+      if ok and name then return name end
+    end
+    return "UNKNOWN"
+  end
+
+  local mon_name = monitor_name(mon)
+
   if GUI and GUI.apply_text_scale then
-    GUI.apply_text_scale(mon, { name = peripheral.getName(mon), fixed_scale = fixed_scale })
+    GUI.apply_text_scale(mon, { name = mon_name, fixed_scale = fixed_scale })
   elseif mon and not GUI then
     pcall(mon.setTextScale, 0.5)
   end
@@ -55,9 +65,9 @@ function M.create(opts)
 
   local function build_gui()
     if not (GUI and mon) then return nil end
-    router=GUI.mkRouter({monitorName=peripheral.getName(mon)})
+    router=GUI.mkRouter({monitorName=mon_name})
     scr=GUI.mkScreen("alarm","Alarm ▢ Master")
-    TB = Topbar.create({title="Alarm ▢ Master", monitor_name=peripheral.getName(mon), window_s=TOPBAR_CFG.window_s}); TB:mount(GUI,scr)
+    TB = Topbar.create({title="Alarm ▢ Master", monitor_name=mon_name, window_s=TOPBAR_CFG.window_s}); TB:mount(GUI,scr)
 
     local lblActive=GUI.mkLabel(2,3,"Aktive Alarme (Severity ▸ Source)",{color=colors.lightGray}); scr:add(lblActive)
     local lstActive=GUI.mkList(2,4,78,9,{}); scr:add(lstActive)
@@ -89,8 +99,31 @@ function M.create(opts)
     end
   end
 
+  local function ensure_alarm_lists(alarm)
+    local cleaned = { active = {}, history = {} }
+    if type(alarm) ~= 'table' then return cleaned end
+
+    local function append(dst, entry)
+      if entry == nil then return end
+      if type(entry) == 'table' then
+        local e = {
+          text = entry.text or (entry.source and tostring(entry.source)) or (entry.alarm and tostring(entry.alarm)) or "UNKNOWN",
+          color = entry.color or colors.white,
+        }
+        table.insert(dst, e)
+      else
+        table.insert(dst, { text = tostring(entry), color = colors.white })
+      end
+    end
+
+    for _,item in ipairs(alarm.active or {}) do append(cleaned.active, item) end
+    for _,item in ipairs(alarm.history or {}) do append(cleaned.history, item) end
+    return cleaned
+  end
+
   local function set_view(view)
-    view_state.alarm = view.alarm or view_state.alarm
+    if type(view) ~= 'table' then return end
+    view_state.alarm = ensure_alarm_lists(view.alarm or {})
     view_state.topbar = view.topbar or view_state.topbar
     request_redraw('view')
   end
