@@ -83,12 +83,28 @@ local GUI; do
   if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end
 end
 
+local function ensure_gui_factory()
+  if not GUI then
+    error("Master UI aborted: missing /xreactor/shared/gui.lua", 0)
+  end
+
+  local missing = {}
+  for _,fn in ipairs({"mkRouter","mkScreen","mkLabel","mkButton","mkList"}) do
+    if type(GUI[fn]) ~= "function" then table.insert(missing, fn) end
+  end
+
+  if #missing > 0 then
+    error("Master UI aborted: GUI shim missing helpers -> " .. table.concat(missing, ", "), 0)
+  end
+end
+
 -- Monitor nach Rolle auswählen
 local function load_ui_map()
   if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end
   return {monitors={}, autoscale={enabled=false}}
 end
 local UIMAP=load_ui_map()
+local AUTOSCALE_CFG = UIMAP.autoscale or { enabled = false }
 local function detect_monitors()
   local monitors = {}
   for _, name in ipairs(peripheral.getNames()) do
@@ -102,10 +118,26 @@ local function detect_monitors()
   return monitors
 end
 
+local function apply_autoscale(mon)
+  if not (AUTOSCALE_CFG.enabled and GUI and GUI.autoscale) then return false end
+  GUI.autoscale(mon, {
+    target_w = AUTOSCALE_CFG.target_w or (AUTOSCALE_CFG.target and AUTOSCALE_CFG.target.w) or 80,
+    target_h = AUTOSCALE_CFG.target_h or (AUTOSCALE_CFG.target and AUTOSCALE_CFG.target.h) or 25,
+    min_scale = AUTOSCALE_CFG.min_scale,
+    max_scale = AUTOSCALE_CFG.max_scale,
+    step = AUTOSCALE_CFG.step,
+  })
+  return true
+end
+
 local function prepare_monitor(mon, name)
   local entry = (UIMAP.monitors or {})[name]
   local scale = entry and entry.scale or (CFG.ui and CFG.ui.text_scale)
-  if scale then pcall(mon.setTextScale, tonumber(scale) or 1.0) end
+  if scale then
+    pcall(mon.setTextScale, tonumber(scale) or 1.0)
+  elseif apply_autoscale(mon) then
+    -- autoscale handled
+  end
   if mon.setBackgroundColor then pcall(mon.setBackgroundColor, colors.black) end
   if mon.clear then pcall(mon.clear) end
   if mon.setCursorPos then pcall(mon.setCursorPos, 1, 1) end
@@ -178,6 +210,7 @@ local function create_home_panel()
 
   local function build_gui()
     if not (GUI and MON) then return end
+    ensure_gui_factory()
     router=GUI.mkRouter({monitorName=peripheral.getName(MON)})
     scr=GUI.mkScreen("home","XReactor ▢ Master")
 
