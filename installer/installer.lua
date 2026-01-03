@@ -117,7 +117,7 @@ local function safe_print(text)
   print(sanitizeText(text))
 end
 
-local SAFETY_MARGIN_BYTES = 2048
+local SAFETY_MARGIN_BYTES = 1024
 local MIN_PROBE_SIZE = 1024
 local DOWNLOAD_CHUNK_SIZE = 16 * 1024
 
@@ -144,7 +144,10 @@ end
 local function write_file(path, reader, expected_size)
   ensure_directory(path)
 
-  local required = (expected_size or 0) + SAFETY_MARGIN_BYTES
+  local existing_size = (fs.exists(path) and fs.getSize and fs.getSize(path)) or 0
+  local estimated_size = expected_size or MIN_PROBE_SIZE
+  local size_delta = math.max(estimated_size - existing_size, 0)
+  local required = size_delta + SAFETY_MARGIN_BYTES
   local space_ok, space_err = ensure_free_space(required, "writing " .. path)
   if not space_ok then
     return false, space_err
@@ -312,8 +315,10 @@ local function calculate_required_space(manifest, opts)
 
   for _, file in ipairs(manifest.files) do
     if not skip[file.dst] then
-      local size = probe_remote_size(manifest.base_url, file.src) or MIN_PROBE_SIZE
-      total = total + size
+      local remote_size = probe_remote_size(manifest.base_url, file.src) or MIN_PROBE_SIZE
+      local existing_size = (fs.exists(file.dst) and fs.getSize and fs.getSize(file.dst)) or 0
+      local additional_needed = math.max(remote_size - existing_size, 0)
+      total = total + additional_needed
     end
   end
 
