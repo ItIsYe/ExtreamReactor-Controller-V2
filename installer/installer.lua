@@ -2,8 +2,37 @@
 
 -- Interactive role selector for XReactor startup configuration
 
-local text_utils = dofile("src/shared/text.lua")
-local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or "") end
+local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
+
+local function resolve_text_utils()
+  local candidates = { TEXT_UTILS_PATH }
+
+  if shell and shell.getRunningProgram and fs and fs.getDir then
+    local program_dir = fs.getDir(shell.getRunningProgram())
+    if program_dir and program_dir ~= "" then
+      table.insert(candidates, fs.combine("/", fs.combine(program_dir, "src/shared/text.lua")))
+    end
+  end
+
+  table.insert(candidates, "/src/shared/text.lua")
+
+  for _, path in ipairs(candidates) do
+    if path and fs.exists(path) then
+      local ok, mod = pcall(dofile, path)
+      if ok and mod then return mod end
+      error("Unable to load text utilities from " .. path .. ": " .. tostring(mod))
+    end
+  end
+
+  error("Unable to locate text utilities (text.lua). Tried: " .. table.concat(candidates, ", "))
+end
+
+local text_utils = resolve_text_utils()
+if not text_utils or not text_utils.sanitizeText then
+  error("text.lua is missing sanitizeText")
+end
+
+local sanitizeText = text_utils.sanitizeText
 
 local ROLE_SOURCE_FILES = {
   MASTER       = "src/master/master_home.lua",

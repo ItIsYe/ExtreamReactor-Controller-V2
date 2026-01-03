@@ -8,6 +8,7 @@ return {
 
   files = {
     -- Shared
+    { src = "src/shared/text.lua",             dst = "/xreactor/shared/text.lua" },
     { src = "src/shared/protocol.lua",          dst = "/xreactor/shared/protocol.lua" },  -- v1.1.0 (Identity)
     { src = "src/shared/identity.lua",          dst = "/xreactor/shared/identity.lua" },  -- NEW
     { src = "src/shared/log.lua",               dst = "/xreactor/shared/log.lua" },
