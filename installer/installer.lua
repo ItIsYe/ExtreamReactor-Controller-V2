@@ -2,37 +2,11 @@
 
 -- Interactive role selector for XReactor startup configuration
 
-local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
-
-local function resolve_text_utils()
-  local candidates = { TEXT_UTILS_PATH }
-
-  if shell and shell.getRunningProgram and fs and fs.getDir then
-    local program_dir = fs.getDir(shell.getRunningProgram())
-    if program_dir and program_dir ~= "" then
-      table.insert(candidates, fs.combine("/", fs.combine(program_dir, "src/shared/text.lua")))
-    end
-  end
-
-  table.insert(candidates, "/src/shared/text.lua")
-
-  for _, path in ipairs(candidates) do
-    if path and fs.exists(path) then
-      local ok, mod = pcall(dofile, path)
-      if ok and mod then return mod end
-      error("Unable to load text utilities from " .. path .. ": " .. tostring(mod))
-    end
-  end
-
-  error("Unable to locate text utilities (text.lua). Tried: " .. table.concat(candidates, ", "))
+local function sanitizeText(text)
+  local sanitized = tostring(text or "")
+  sanitized = sanitized:gsub("[%c]", "")
+  return sanitized
 end
-
-local text_utils = resolve_text_utils()
-if not text_utils or not text_utils.sanitizeText then
-  error("text.lua is missing sanitizeText")
-end
-
-local sanitizeText = text_utils.sanitizeText
 
 local ROLE_SOURCE_FILES = {
   MASTER       = "src/master/master_home.lua",
@@ -143,17 +117,53 @@ local function safe_print(text)
   print(sanitizeText(text))
 end
 
-local function write_file(path, contents)
+local SAFETY_MARGIN_BYTES = 1024
+local MIN_PROBE_SIZE = 1024
+local DOWNLOAD_CHUNK_SIZE = 16 * 1024
+
+local function ensure_directory(path)
   local dir = fs.getDir(path)
   if dir and dir ~= "" and not fs.exists(dir) then
     fs.makeDir(dir)
+  end
+end
+
+local function ensure_free_space(required, context)
+  local free = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+  if not free then
+    return true
+  end
+
+  if free < required then
+    return false, string.format("Insufficient disk space for %s (need %d bytes, have %d)", context or "operation", required, free)
+  end
+
+  return true
+end
+
+local function write_file(path, reader, expected_size)
+  ensure_directory(path)
+
+  local existing_size = (fs.exists(path) and fs.getSize and fs.getSize(path)) or 0
+  local estimated_size = expected_size or MIN_PROBE_SIZE
+  local size_delta = math.max(estimated_size - existing_size, 0)
+  local required = size_delta + SAFETY_MARGIN_BYTES
+  local space_ok, space_err = ensure_free_space(required, "writing " .. path)
+  if not space_ok then
+    return false, space_err
   end
 
   local handle = fs.open(path, "w")
   if not handle then
     return false, "Unable to open file for writing: " .. path
   end
-  handle.write(contents)
+
+  while true do
+    local chunk = reader()
+    if not chunk then break end
+    handle.write(chunk)
+  end
+
   handle.close()
   return true
 end
@@ -217,6 +227,29 @@ local function verify_master_installation()
   return true
 end
 
+local function probe_remote_size(base_url, src)
+  local url = string.format("%s/%s", base_url, src)
+  local handle = http.get(url, { Range = "bytes=0-0" })
+  if not handle then
+    return nil
+  end
+
+  local headers = (handle.getResponseHeaders and handle.getResponseHeaders()) or {}
+  local content_length = tonumber(headers["Content-Length"] or headers["content-length"])
+  local body = handle.readAll() or ""
+  handle.close()
+
+  if content_length and content_length > 0 then
+    return content_length
+  end
+
+  if #body > 0 then
+    return math.max(#body, MIN_PROBE_SIZE)
+  end
+
+  return nil
+end
+
 local function download_file(base_url, src, dst)
   local url = string.format("%s/%s", base_url, src)
   local handle, err = http.get(url)
@@ -233,14 +266,16 @@ local function download_file(base_url, src, dst)
     return nil, "Download failed for " .. src .. " with status " .. tostring(status)
   end
 
-  local contents = handle.readAll() or ""
-  handle.close()
+  local headers = (handle.getResponseHeaders and handle.getResponseHeaders()) or {}
+  local expected_size = tonumber(headers["Content-Length"] or headers["content-length"])
 
-  if contents == "" then
-    return nil, "Empty content for " .. src
+  local function reader()
+    return handle.read(DOWNLOAD_CHUNK_SIZE)
   end
 
-  local ok, write_err = write_file(dst, contents)
+  local ok, write_err = write_file(dst, reader, expected_size)
+  handle.close()
+
   if not ok then
     return nil, write_err
   end
@@ -253,19 +288,41 @@ local function copy_file(src, dst)
     return nil, "Source missing: " .. src
   end
 
+  local expected_size = fs.getSize and fs.getSize(src) or nil
   local handle = fs.open(src, "r")
   if not handle then
     return nil, "Unable to read source file: " .. src
   end
-  local contents = handle.readAll() or ""
+
+  local function reader()
+    return handle.read(DOWNLOAD_CHUNK_SIZE)
+  end
+
+  local ok, write_err = write_file(dst, reader, expected_size)
   handle.close()
 
-  local ok, write_err = write_file(dst, contents)
   if not ok then
     return nil, write_err
   end
 
   return dst
+end
+
+local function calculate_required_space(manifest, opts)
+  opts = opts or {}
+  local skip = opts.skip or {}
+  local total = 0
+
+  for _, file in ipairs(manifest.files) do
+    if not skip[file.dst] then
+      local remote_size = probe_remote_size(manifest.base_url, file.src) or MIN_PROBE_SIZE
+      local existing_size = (fs.exists(file.dst) and fs.getSize and fs.getSize(file.dst)) or 0
+      local additional_needed = math.max(remote_size - existing_size, 0)
+      total = total + additional_needed
+    end
+  end
+
+  return total + SAFETY_MARGIN_BYTES
 end
 
 local function install_from_manifest(manifest, opts)
@@ -393,20 +450,24 @@ package.path = table.concat({
   "/?.lua",
 }, ";")
 
+local function startup_print(msg)
+  print(tostring(msg or ""))
+end
+
 if not fs.exists(target) then
-  safe_print("Startup target missing: " .. target)
+  startup_print("Startup target missing: " .. target)
   return
 end
 
 local loader = loadfile(target)
 if not loader then
-  safe_print("Unable to load " .. target)
+  startup_print("Unable to load " .. target)
   return
 end
 
 local ok, err = pcall(loader)
 if not ok then
-  safe_print("Error while running " .. target .. ": " .. tostring(err))
+  startup_print("Error while running " .. target .. ": " .. tostring(err))
 end
 ]], role_name, target)
 
@@ -546,6 +607,17 @@ local function main()
       skip_paths["/startup.lua"] = true
     end
 
+    local required_space = calculate_required_space(manifest, { skip = skip_paths })
+    local has_space, space_err = ensure_free_space(required_space, "update")
+    if not has_space then
+      term.clear()
+      center_print(2, "Update aborted: insufficient space.")
+      center_print(4, space_err)
+      center_print(6, "Free up space and retry.")
+      wait_for_key()
+      return
+    end
+
     local installed, install_err, updated = install_from_manifest(manifest, { skip = skip_paths })
     if not installed then
       term.clear()
@@ -576,6 +648,17 @@ local function main()
     term.setCursorPos(1, line + 2)
     center_print(line + 2, "Existing configuration preserved.")
     center_print(line + 4, "Installer will now exit.")
+    return
+  end
+
+  local required_space = calculate_required_space(manifest)
+  local has_space, space_err = ensure_free_space(required_space, "installation")
+  if not has_space then
+    term.clear()
+    center_print(2, "Installation aborted: insufficient space.")
+    center_print(4, space_err)
+    center_print(6, "Free up space and retry.")
+    wait_for_key()
     return
   end
 
