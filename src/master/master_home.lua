@@ -83,12 +83,37 @@ local GUI; do
   if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end
 end
 
+local function ensure_gui_factory()
+  if not GUI then
+    error("Master UI aborted: missing /xreactor/shared/gui.lua", 0)
+  end
+
+  local missing = {}
+  for _,fn in ipairs({"mkRouter","mkScreen","mkLabel","mkButton","mkList"}) do
+    if type(GUI[fn]) ~= "function" then table.insert(missing, fn) end
+  end
+
+  if #missing > 0 then
+    error("Master UI aborted: GUI shim missing helpers -> " .. table.concat(missing, ", "), 0)
+  end
+end
+
 -- Monitor nach Rolle auswählen
 local function load_ui_map()
   if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end
   return {monitors={}, autoscale={enabled=false}}
 end
 local UIMAP=load_ui_map()
+local AUTOSCALE_CFG = UIMAP.autoscale or { enabled = false }
+local function monitor_scale_for(name)
+  local entry = (UIMAP.monitors or {})[name]
+  return entry and entry.scale or (CFG.ui and CFG.ui.text_scale)
+end
+local function monitor_name(mon)
+  if not mon then return nil end
+  if peripheral and peripheral.getName then return peripheral.getName(mon) end
+  return nil
+end
 local function detect_monitors()
   local monitors = {}
   for _, name in ipairs(peripheral.getNames()) do
@@ -103,9 +128,22 @@ local function detect_monitors()
 end
 
 local function prepare_monitor(mon, name)
-  local entry = (UIMAP.monitors or {})[name]
-  local scale = entry and entry.scale or (CFG.ui and CFG.ui.text_scale)
-  if scale then pcall(mon.setTextScale, tonumber(scale) or 1.0) end
+  local scale = monitor_scale_for(name)
+  if GUI and GUI.apply_text_scale then
+    GUI.apply_text_scale(mon, {
+      name = name,
+      fixed_scale = scale,
+      max_cols = AUTOSCALE_CFG.max_cols or AUTOSCALE_CFG.target_w,
+      min_cols = AUTOSCALE_CFG.min_cols,
+      max_rows = AUTOSCALE_CFG.max_rows or AUTOSCALE_CFG.target_h,
+      min_rows = AUTOSCALE_CFG.min_rows,
+      min_scale = AUTOSCALE_CFG.min_scale,
+      max_scale = AUTOSCALE_CFG.max_scale,
+      step = AUTOSCALE_CFG.step,
+    })
+  elseif scale then
+    pcall(mon.setTextScale, tonumber(scale) or 1.0)
+  end
   if mon.setBackgroundColor then pcall(mon.setBackgroundColor, colors.black) end
   if mon.clear then pcall(mon.clear) end
   if mon.setCursorPos then pcall(mon.setCursorPos, 1, 1) end
@@ -178,7 +216,13 @@ local function create_home_panel()
 
   local function build_gui()
     if not (GUI and MON) then return end
-    router=GUI.mkRouter({monitorName=peripheral.getName(MON)})
+    ensure_gui_factory()
+    local mon_name = peripheral.getName(MON)
+    router=GUI.mkRouter({
+      monitorName = mon_name,
+      text_scale = monitor_scale_for(mon_name),
+      autoscale = AUTOSCALE_CFG,
+    })
     scr=GUI.mkScreen("home","XReactor ▢ Master")
 
     TB = Topbar.create({title="XReactor ▢ Master", monitor_name=peripheral.getName(MON), window_s=TOPBAR_CFG.window_s, show_clock=true, show_net=true, show_alarm=true, show_health=true})
@@ -227,15 +271,17 @@ local function start_panels()
   local alarm_mon = pick_monitor_for_role("alarm_center")
   local overview_mon = pick_monitor_for_role("system_overview")
 
-  local fuel_panel = fuel_mon and FuelPanel.create({monitor=fuel_mon}) or nil
-  local waste_panel = waste_mon and WastePanel.create({monitor=waste_mon}) or nil
+  local fuel_panel = fuel_mon and FuelPanel.create({monitor=fuel_mon, text_scale=monitor_scale_for(monitor_name(fuel_mon))}) or nil
+  local waste_panel = waste_mon and WastePanel.create({monitor=waste_mon, text_scale=monitor_scale_for(monitor_name(waste_mon))}) or nil
   local alarm_panel = AlarmPanel.create({
     monitor=alarm_mon,
+    text_scale=monitor_scale_for(monitor_name(alarm_mon)),
     on_home = function() shell.run("/xreactor/master/master_home.lua") end,
     on_ack = function() MODEL:ack_alarms() end,
   })
   local overview_panel = overview_mon and OverviewPanel.create({
     monitor=overview_mon,
+    text_scale=monitor_scale_for(monitor_name(overview_mon)),
     on_filter_change = function(k,v) MODEL:set_overview_filter(k,v) end,
     on_refresh = function() CORE:publish(PROTO.make_hello(IDENT)) end,
   }) or nil
