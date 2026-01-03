@@ -4,20 +4,32 @@
 --========================================================
 local roles={"master_home","fuel_manager","waste_service","alarm_center","system_overview"}
 
-local sanitizeText do
-  local ok, mod = pcall(require, "xreactor.shared.text")
-  if ok and mod and mod.sanitizeText then sanitizeText = mod.sanitizeText end
-  if not sanitizeText and fs and fs.exists then
-    if fs.exists("/xreactor/shared/text.lua") then
-      local ok2, mod2 = pcall(dofile, "/xreactor/shared/text.lua")
-      if ok2 and mod2 and mod2.sanitizeText then sanitizeText = mod2.sanitizeText end
-    elseif fs.exists("src/shared/text.lua") then
-      local ok3, mod3 = pcall(dofile, "src/shared/text.lua")
-      if ok3 and mod3 and mod3.sanitizeText then sanitizeText = mod3.sanitizeText end
+local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
+
+local function resolve_text_utils()
+  local candidates = { TEXT_UTILS_PATH }
+
+  if shell and shell.getRunningProgram and fs and fs.getDir then
+    local program_dir = fs.getDir(shell.getRunningProgram())
+    if program_dir and program_dir ~= "" then
+      table.insert(candidates, fs.combine("/", fs.combine(program_dir, "src/shared/text.lua")))
     end
   end
-  sanitizeText = sanitizeText or function(text) return tostring(text or "") end
+
+  table.insert(candidates, "/src/shared/text.lua")
+
+  for _, path in ipairs(candidates) do
+    if fs.exists(path) then
+      local ok, mod = pcall(dofile, path)
+      if ok and mod and mod.sanitizeText then return mod.sanitizeText end
+      error("Unable to load text utilities from " .. path .. ": " .. tostring(mod))
+    end
+  end
+
+  error("Unable to locate text utilities (text.lua). Tried: " .. table.concat(candidates, ", "))
 end
+
+local sanitizeText = resolve_text_utils()
 
 local function safe_print(text)
   print(sanitizeText(text))

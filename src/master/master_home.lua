@@ -57,8 +57,20 @@ local CORE = MasterCore.create({auth_token=CFG.auth_token, modem_side=CFG.modem_
 local MODEL = Model.create(CORE:get_dispatcher())
 local TOPBAR_CFG = { window_s = 300, health = { timeout_s = 10, warn_s = 20, crit_s = 60, min_nodes = 1 } }
 
-local text_utils = dofile("/xreactor/shared/text.lua")
-local sanitizeText = (text_utils and text_utils.sanitizeText) or function(text) return tostring(text or "") end
+local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
+local function load_text_utils()
+  local ok, mod = pcall(dofile, TEXT_UTILS_PATH)
+  if not ok or not mod then
+    error("Unable to load text utilities from " .. TEXT_UTILS_PATH .. ": " .. tostring(mod))
+  end
+  if not mod.sanitizeText then
+    error("text.lua is missing sanitizeText at " .. TEXT_UTILS_PATH)
+  end
+  return mod
+end
+
+local text_utils = load_text_utils()
+local sanitizeText = text_utils.sanitizeText
 local function safe_print(text)
   print(sanitizeText(text))
 end
