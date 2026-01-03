@@ -2,19 +2,10 @@
 
 -- Interactive role selector for XReactor startup configuration
 
-local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
-
-local function resolve_text_utils()
-  if not (fs and fs.exists and fs.exists(TEXT_UTILS_PATH)) then
-    error("Unable to locate text utilities (text.lua) at " .. TEXT_UTILS_PATH)
-  end
-
-  local ok, mod = pcall(dofile, TEXT_UTILS_PATH)
-  if not ok or not mod then
-    error("Unable to load text utilities from " .. TEXT_UTILS_PATH .. ": " .. tostring(mod))
-  end
-
-  return mod
+local function sanitizeText(text)
+  local sanitized = tostring(text or "")
+  sanitized = sanitized:gsub("[%c]", "")
+  return sanitized
 end
 
 local ROLE_SOURCE_FILES = {
@@ -376,20 +367,24 @@ package.path = table.concat({
   "/?.lua",
 }, ";")
 
+local function startup_print(msg)
+  print(tostring(msg or ""))
+end
+
 if not fs.exists(target) then
-  safe_print("Startup target missing: " .. target)
+  startup_print("Startup target missing: " .. target)
   return
 end
 
 local loader = loadfile(target)
 if not loader then
-  safe_print("Unable to load " .. target)
+  startup_print("Unable to load " .. target)
   return
 end
 
 local ok, err = pcall(loader)
 if not ok then
-  safe_print("Error while running " .. target .. ": " .. tostring(err))
+  startup_print("Error while running " .. target .. ": " .. tostring(err))
 end
 ]], role_name, target)
 
