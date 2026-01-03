@@ -17,13 +17,6 @@ local function resolve_text_utils()
   return mod
 end
 
-local text_utils = resolve_text_utils()
-if not text_utils or not text_utils.sanitizeText then
-  error("text.lua is missing sanitizeText")
-end
-
-local sanitizeText = text_utils.sanitizeText
-
 local ROLE_SOURCE_FILES = {
   MASTER       = "src/master/master_home.lua",
   REACTOR      = "src/node/reactor_node.lua",
