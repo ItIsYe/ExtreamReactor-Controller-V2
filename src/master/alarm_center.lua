@@ -35,7 +35,12 @@ local MODEL = Model.create(DISP)
 local GUI; do local ok,g=pcall(require,"xreactor.shared.gui"); if ok then GUI=g elseif fs.exists("/xreactor/shared/gui.lua") then GUI=dofile("/xreactor/shared/gui.lua") end end
 local function load_ui_map() if fs.exists("/xreactor/ui_map.lua") then local ok,t=pcall(dofile,"/xreactor/ui_map.lua"); if ok and type(t)=="table" then return t end end; return {monitors={}, autoscale={enabled=false}} end
 local UIMAP=load_ui_map()
-local function pick_monitor_for_role(role) local name; for n,cfg in pairs(UIMAP.monitors or {}) do if cfg.role==role then name=n break end end; local mon=name and peripheral.wrap(name) or ({peripheral.find("monitor")})[1]; if not mon then return nil end; local e=(UIMAP.monitors or {})[peripheral.getName(mon)]; local s=e and e.scale or (CFG.ui and CFG.ui.text_scale); if s then pcall(mon.setTextScale, tonumber(s) or 1.0) end; return mon end
+local AUTOSCALE_CFG = UIMAP.autoscale or { enabled = false }
+local function monitor_scale_for(name) local entry=(UIMAP.monitors or {})[name]; return entry and entry.scale or (CFG.ui and CFG.ui.text_scale) end
+local function pick_monitor_for_role(role) local name; for n,cfg in pairs(UIMAP.monitors or {}) do if cfg.role==role then name=n break end end; local mon=name and peripheral.wrap(name) or ({peripheral.find("monitor")})[1]; if not mon then return nil end; local s=monitor_scale_for(peripheral.getName(mon));
+  if GUI and GUI.apply_text_scale then GUI.apply_text_scale(mon,{ name=name or peripheral.getName(mon), fixed_scale=s, max_cols=AUTOSCALE_CFG.max_cols or AUTOSCALE_CFG.target_w, min_cols=AUTOSCALE_CFG.min_cols, max_rows=AUTOSCALE_CFG.max_rows or AUTOSCALE_CFG.target_h, min_rows=AUTOSCALE_CFG.min_rows, min_scale=AUTOSCALE_CFG.min_scale, max_scale=AUTOSCALE_CFG.max_scale, step=AUTOSCALE_CFG.step })
+  elseif s then pcall(mon.setTextScale, tonumber(s) or 1.0) end
+  return mon end
 local MON=pick_monitor_for_role("alarm_center"); if MON and not GUI then pcall(MON.setTextScale, 0.5) end
 
 local Topbar = dofile("/xreactor/shared/topbar.lua")
@@ -58,7 +63,8 @@ end
 
 local function build_gui()
   if not (GUI and MON) then return nil end
-  local router=GUI.mkRouter({monitorName=peripheral.getName(MON)})
+  local mon_name = peripheral.getName(MON)
+  local router=GUI.mkRouter({monitorName=mon_name, text_scale=monitor_scale_for(mon_name), autoscale=AUTOSCALE_CFG})
   local scr=GUI.mkScreen("alarm","Alarm ▢ Center")
   TB = Topbar.create({title="Alarm ▢ Center", monitor_name=peripheral.getName(MON)}); TB:mount(GUI,scr)
 

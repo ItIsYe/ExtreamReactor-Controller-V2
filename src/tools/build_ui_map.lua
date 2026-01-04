@@ -7,26 +7,14 @@ local roles={"master_home","fuel_manager","waste_service","alarm_center","system
 local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
 
 local function resolve_text_utils()
-  local candidates = { TEXT_UTILS_PATH }
-
-  if shell and shell.getRunningProgram and fs and fs.getDir then
-    local program_dir = fs.getDir(shell.getRunningProgram())
-    if program_dir and program_dir ~= "" then
-      table.insert(candidates, fs.combine("/", fs.combine(program_dir, "src/shared/text.lua")))
-    end
+  if not (fs and fs.exists and fs.exists(TEXT_UTILS_PATH)) then
+    error("Unable to locate text utilities (text.lua) at " .. TEXT_UTILS_PATH)
   end
 
-  table.insert(candidates, "/src/shared/text.lua")
+  local ok, mod = pcall(dofile, TEXT_UTILS_PATH)
+  if ok and mod and mod.sanitizeText then return mod.sanitizeText end
 
-  for _, path in ipairs(candidates) do
-    if fs.exists(path) then
-      local ok, mod = pcall(dofile, path)
-      if ok and mod and mod.sanitizeText then return mod.sanitizeText end
-      error("Unable to load text utilities from " .. path .. ": " .. tostring(mod))
-    end
-  end
-
-  error("Unable to locate text utilities (text.lua). Tried: " .. table.concat(candidates, ", "))
+  error("Unable to load text utilities from " .. TEXT_UTILS_PATH .. ": " .. tostring(mod))
 end
 
 local sanitizeText = resolve_text_utils()
