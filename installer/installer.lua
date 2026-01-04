@@ -404,6 +404,65 @@ local function wait_for_key()
   os.pullEvent("key")
 end
 
+local function configure_startup_for_role(role_targets)
+  local choice
+
+  while true do
+    choice = select_role()
+    if confirm_role(choice, role_targets) then break end
+  end
+
+  if choice.name == "MASTER" and not is_advanced_computer() then
+    term.clear()
+    center_print(2, "MASTER role requires an Advanced Computer.")
+    center_print(4, "Install on an Advanced Computer and retry.")
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local target, err = resolve_target(choice.name, role_targets)
+  if not target then
+    term.clear()
+    center_print(2, "Cannot configure startup.")
+    center_print(4, err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local wrote, write_err = write_startup(choice.name, target)
+  if not wrote then
+    term.clear()
+    center_print(2, "Failed to write startup.lua.")
+    center_print(4, write_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  if choice.name == "REACTOR" then
+    local ok, verify_err = verify_reactor_startup(target)
+    if not ok then
+      term.clear()
+      center_print(2, "Reactor autostart verification failed.")
+      center_print(4, verify_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return false
+    end
+  end
+
+  term.clear()
+  term.setCursorPos(1, 2)
+  center_print(2, "Startup configured for role: " .. choice.name)
+  center_print(4, "Target file: " .. target)
+  center_print(6, "Reboot the computer to launch the selected role.")
+  center_print(8, "Installer will now exit.")
+
+  return true
+end
+
 local function draw_menu(selected)
   term.clear()
   term.setCursorPos(1, 1)
@@ -486,33 +545,7 @@ local function write_startup(role_name, target)
     return nil, "Startup target missing: " .. target
   end
 
-  local contents = string.format([[-- Auto-generated startup for role %s
-local target = %q
-
-package.path = table.concat({
-  "/xreactor/?.lua",
-  "/xreactor/?/init.lua",
-  "/xreactor/?/?.lua",
-  "/?.lua",
-}, ";")
-
-local function startup_print(msg)
-  print(tostring(msg or ""))
-end
-
-if not fs.exists(target) then
-  startup_print("Startup target missing: " .. target)
-  return
-end
-
-local ok, err = pcall(function()
-  shell.run(target)
-end)
-
-if not ok then
-  startup_print("Error while running " .. target .. ": " .. tostring(err))
-end
-]], role_name, target)
+  local contents = string.format("shell.run(%q)\n", target)
 
   local handle = fs.open("/startup.lua", "w")
   if not handle then
@@ -520,6 +553,33 @@ end
   end
   handle.write(contents)
   handle.close()
+
+  return true
+end
+
+local function verify_reactor_startup(target)
+  if type(target) ~= "string" or target == "" then
+    return false, "Invalid reactor target"
+  end
+
+  if not fs.exists(target) then
+    return false, "Reactor entrypoint missing: " .. target
+  end
+
+  local handle = fs.open("/startup.lua", "r")
+  if not handle then
+    return false, "Unable to read /startup.lua after writing"
+  end
+
+  local content = handle.readAll() or ""
+  handle.close()
+
+  local expected = string.format("shell.run(%q)", target)
+  local trimmed = content:gsub("%s+$", "")
+
+  if trimmed ~= expected then
+    return false, "startup.lua does not launch reactor target correctly"
+  end
 
   return true
 end
@@ -645,14 +705,10 @@ local function main()
 
   local already_installed = detect_existing_installation(manifest)
   local mode = select_mode(already_installed)
+  local role_targets
 
   if mode == "update" then
-    local skip_paths = {}
-    if fs.exists("/startup.lua") then
-      skip_paths["/startup.lua"] = true
-    end
-
-    local required_space = calculate_required_space(manifest, { skip = skip_paths })
+    local required_space = calculate_required_space(manifest)
     local has_space, space_err = ensure_free_space(required_space, "update")
     if not has_space then
       term.clear()
@@ -663,7 +719,7 @@ local function main()
       return
     end
 
-    local installed, install_err, updated = install_from_manifest(manifest, { skip = skip_paths })
+    local installed, install_err, updated = install_from_manifest(manifest)
     if not installed then
       term.clear()
       center_print(2, "Update failed to download files.")
@@ -673,8 +729,8 @@ local function main()
       return
     end
 
-    local role_targets, role_targets_err = build_role_targets(manifest)
-    if not role_targets then
+    local targets, role_targets_err = build_role_targets(manifest)
+    if not targets then
       term.clear()
       center_print(2, "Installer manifest invalid for roles.")
       center_print(4, role_targets_err)
@@ -683,7 +739,7 @@ local function main()
       return
     end
 
-    local targets_ok, targets_err = verify_role_targets(role_targets)
+    local targets_ok, targets_err = verify_role_targets(targets)
     if not targets_ok then
       term.clear()
       center_print(2, "Role targets missing after update.")
@@ -693,122 +749,64 @@ local function main()
       return
     end
 
-    term.clear()
-    center_print(2, "Update complete.")
-    center_print(4, "Updated files:")
-    local line = 5
-    for _, path in ipairs(updated) do
-      term.setCursorPos(4, line)
-      term.clearLine()
-      safe_term_write(path)
-      line = line + 1
-      if line > select(2, term.getSize()) then break end
+    role_targets = targets
+  else
+    local required_space = calculate_required_space(manifest)
+    local has_space, space_err = ensure_free_space(required_space, "installation")
+    if not has_space then
+      term.clear()
+      center_print(2, "Installation aborted: insufficient space.")
+      center_print(4, space_err)
+      center_print(6, "Free up space and retry.")
+      wait_for_key()
+      return
     end
 
-    if #updated == 0 then
-      term.setCursorPos(4, line)
-      safe_term_write("No files needed updating.")
+    local installed, install_err = install_from_manifest(manifest)
+    if not installed then
+      term.clear()
+      center_print(2, "Installer failed to download files.")
+      center_print(4, install_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
     end
 
-    term.setCursorPos(1, line + 2)
-    center_print(line + 2, "Existing configuration preserved.")
-    center_print(line + 4, "Installer will now exit.")
-    return
+    local master_ok, master_err = verify_master_installation()
+    if not master_ok then
+      term.clear()
+      center_print(2, "Master installation incomplete.")
+      center_print(4, master_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    local targets, role_targets_err = build_role_targets(manifest)
+    if not targets then
+      term.clear()
+      center_print(2, "Installer manifest invalid for roles.")
+      center_print(4, role_targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    local targets_ok, targets_err = verify_role_targets(targets)
+    if not targets_ok then
+      term.clear()
+      center_print(2, "Role targets missing after installation.")
+      center_print(4, targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    role_targets = targets
   end
 
-  local required_space = calculate_required_space(manifest)
-  local has_space, space_err = ensure_free_space(required_space, "installation")
-  if not has_space then
-    term.clear()
-    center_print(2, "Installation aborted: insufficient space.")
-    center_print(4, space_err)
-    center_print(6, "Free up space and retry.")
-    wait_for_key()
-    return
-  end
-
-  local installed, install_err = install_from_manifest(manifest)
-  if not installed then
-    term.clear()
-    center_print(2, "Installer failed to download files.")
-    center_print(4, install_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local master_ok, master_err = verify_master_installation()
-  if not master_ok then
-    term.clear()
-    center_print(2, "Master installation incomplete.")
-    center_print(4, master_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local role_targets, role_targets_err = build_role_targets(manifest)
-  if not role_targets then
-    term.clear()
-    center_print(2, "Installer manifest invalid for roles.")
-    center_print(4, role_targets_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local targets_ok, targets_err = verify_role_targets(role_targets)
-  if not targets_ok then
-    term.clear()
-    center_print(2, "Role targets missing after installation.")
-    center_print(4, targets_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local choice
-
-  while true do
-    choice = select_role()
-    if confirm_role(choice, role_targets) then break end
-  end
-
-  if choice.name == "MASTER" and not is_advanced_computer() then
-    term.clear()
-    center_print(2, "MASTER role requires an Advanced Computer.")
-    center_print(4, "Install on an Advanced Computer and retry.")
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local target, err = resolve_target(choice.name, role_targets)
-  if not target then
-    term.clear()
-    center_print(2, "Cannot configure startup.")
-    center_print(4, err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local wrote, write_err = write_startup(choice.name, target)
-  if not wrote then
-    term.clear()
-    center_print(2, "Failed to write startup.lua.")
-    center_print(4, write_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  term.clear()
-  term.setCursorPos(1, 2)
-  center_print(2, "Startup configured for role: " .. choice.name)
-  center_print(4, "Target file: " .. target)
-  center_print(6, "Reboot the computer to launch the selected role.")
-  center_print(8, "Installer will now exit.")
+  local configured = configure_startup_for_role(role_targets)
+  if not configured then return end
 end
 
 local ok, err = pcall(main)
