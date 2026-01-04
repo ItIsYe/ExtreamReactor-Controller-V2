@@ -153,6 +153,28 @@ local function ensure_free_space(required, context)
   return true
 end
 
+local function get_startup_path()
+  local path = STARTUP_PATH
+
+  if type(path) ~= "string" or path == "" then
+    error("Startup path is invalid")
+  end
+
+  if not path:match("^/") then
+    error("Startup path must be absolute: " .. tostring(path))
+  end
+
+  if path ~= "/startup.lua" then
+    error("Startup path must be /startup.lua (got " .. tostring(path) .. ")")
+  end
+
+  if path:match("^/rom") then
+    error("Startup path must be writable; refusing to use ROM location: " .. path)
+  end
+
+  return path
+end
+
 local function write_file(path, reader, expected_size)
   ensure_directory(path)
 
@@ -562,10 +584,12 @@ local function resolve_target(role_name, role_targets)
 end
 
 local function purge_secondary_startup_files()
+  local startup_path = get_startup_path()
+
   local function walk(path)
     for _, name in ipairs(fs.list(path)) do
       local child = fs.combine(path, name)
-      if name == "startup.lua" and child ~= STARTUP_PATH then
+      if name == "startup.lua" and child ~= startup_path then
         fs.delete(child)
       elseif fs.isDir(child) then
         walk(child)
@@ -599,9 +623,11 @@ local function write_startup(role_name, target)
 
   purge_secondary_startup_files()
 
-  local handle = fs.open(STARTUP_PATH, "w")
+  local startup_path = get_startup_path()
+
+  local handle = fs.open(startup_path, "w")
   if not handle then
-    error("Cannot open /startup.lua for writing")
+    error("Cannot open " .. startup_path .. " for writing")
   end
   handle.write(REACTOR_STARTUP_CONTENT)
   handle.close()
@@ -630,9 +656,11 @@ local function verify_startup_file(role_name, target)
     return false, "Startup target missing: " .. target
   end
 
-  local handle = fs.open(STARTUP_PATH, "r")
+  local startup_path = get_startup_path()
+
+  local handle = fs.open(startup_path, "r")
   if not handle then
-    return false, "Unable to read /startup.lua after writing"
+    return false, "Unable to read " .. startup_path .. " after writing"
   end
 
   local content = handle.readAll() or ""
@@ -691,7 +719,9 @@ local function configure_startup_for_role(role_targets)
 end
 
 local function detect_existing_installation(manifest)
-  if fs.exists("/xreactor") or fs.exists("/startup.lua") then
+  local startup_path = get_startup_path()
+
+  if fs.exists("/xreactor") or fs.exists(startup_path) then
     return true
   end
 
@@ -790,6 +820,7 @@ local function installer_self_check()
 end
 
 local function main()
+  local startup_path = get_startup_path()
   term.setCursorBlink(false)
 
   local ok, self_check_err = installer_self_check()
@@ -820,7 +851,7 @@ local function main()
   local already_installed = detect_existing_installation(manifest)
   local mode = select_mode(already_installed)
   local role_targets
-  local skip_files = { [STARTUP_PATH] = true }
+  local skip_files = { [startup_path] = true }
 
   if mode == "update" then
     local required_space = calculate_required_space(manifest, { skip = skip_files })
