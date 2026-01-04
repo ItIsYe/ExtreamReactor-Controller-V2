@@ -404,6 +404,65 @@ local function wait_for_key()
   os.pullEvent("key")
 end
 
+local function configure_startup_for_role(role_targets)
+  local choice
+
+  while true do
+    choice = select_role_from_menu()
+    if confirm_role(choice, role_targets) then break end
+  end
+
+  if choice.name == "MASTER" and not is_advanced_computer() then
+    term.clear()
+    center_print(2, "MASTER role requires an Advanced Computer.")
+    center_print(4, "Install on an Advanced Computer and retry.")
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local target, err = resolve_target(choice.name, role_targets)
+  if not target then
+    term.clear()
+    center_print(2, "Cannot configure startup.")
+    center_print(4, err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local wrote, write_err = write_startup(choice.name, target)
+  if not wrote then
+    term.clear()
+    center_print(2, "Failed to write startup.lua.")
+    center_print(4, write_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  if choice.name == "REACTOR" then
+    local ok, verify_err = verify_reactor_startup(target)
+    if not ok then
+      term.clear()
+      center_print(2, "Reactor autostart verification failed.")
+      center_print(4, verify_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return false
+    end
+  end
+
+  term.clear()
+  term.setCursorPos(1, 2)
+  center_print(2, "Startup configured for role: " .. choice.name)
+  center_print(4, "Target file: " .. target)
+  center_print(6, "Reboot the computer to launch the selected role.")
+  center_print(8, "Installer will now exit.")
+
+  return true
+end
+
 local function draw_menu(selected)
   term.clear()
   term.setCursorPos(1, 1)
