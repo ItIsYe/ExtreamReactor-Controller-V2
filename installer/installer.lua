@@ -355,15 +355,45 @@ end
 
 local function build_role_targets(manifest)
   local targets = {}
+  local missing = {}
+
   for role, src in pairs(ROLE_SOURCE_FILES) do
+    local found
     for _, file in ipairs(manifest.files) do
       if file.src == src then
         targets[role] = file.dst
+        found = true
         break
       end
     end
+    if not found then
+      table.insert(missing, role)
+    end
   end
+
+  if #missing > 0 then
+    return nil, "Installer manifest missing targets for roles: " .. table.concat(missing, ", ")
+  end
+
   return targets
+end
+
+local function verify_role_targets(role_targets)
+  local missing = {}
+
+  for role, path in pairs(role_targets) do
+    if type(path) ~= "string" or path == "" then
+      table.insert(missing, role .. " (invalid target)")
+    elseif not fs.exists(path) then
+      table.insert(missing, string.format("%s (%s)", role, path))
+    end
+  end
+
+  if #missing > 0 then
+    return false, "Missing startup targets: " .. table.concat(missing, ", ")
+  end
+
+  return true
 end
 
 local function is_advanced_computer()
@@ -448,6 +478,14 @@ local function resolve_target(role_name, role_targets)
 end
 
 local function write_startup(role_name, target)
+  if type(target) ~= "string" or target == "" then
+    return nil, "Invalid startup target"
+  end
+
+  if not fs.exists(target) then
+    return nil, "Startup target missing: " .. target
+  end
+
   local contents = string.format([[-- Auto-generated startup for role %s
 local target = %q
 
@@ -467,13 +505,10 @@ if not fs.exists(target) then
   return
 end
 
-local loader = loadfile(target)
-if not loader then
-  startup_print("Unable to load " .. target)
-  return
-end
+local ok, err = pcall(function()
+  shell.run(target)
+end)
 
-local ok, err = pcall(loader)
 if not ok then
   startup_print("Error while running " .. target .. ": " .. tostring(err))
 end
@@ -485,6 +520,8 @@ end
   end
   handle.write(contents)
   handle.close()
+
+  return true
 end
 
 local function installer_self_check()
@@ -636,6 +673,26 @@ local function main()
       return
     end
 
+    local role_targets, role_targets_err = build_role_targets(manifest)
+    if not role_targets then
+      term.clear()
+      center_print(2, "Installer manifest invalid for roles.")
+      center_print(4, role_targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    local targets_ok, targets_err = verify_role_targets(role_targets)
+    if not targets_ok then
+      term.clear()
+      center_print(2, "Role targets missing after update.")
+      center_print(4, targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
     term.clear()
     center_print(2, "Update complete.")
     center_print(4, "Updated files:")
@@ -690,7 +747,26 @@ local function main()
     return
   end
 
-  local role_targets = build_role_targets(manifest)
+  local role_targets, role_targets_err = build_role_targets(manifest)
+  if not role_targets then
+    term.clear()
+    center_print(2, "Installer manifest invalid for roles.")
+    center_print(4, role_targets_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
+  local targets_ok, targets_err = verify_role_targets(role_targets)
+  if not targets_ok then
+    term.clear()
+    center_print(2, "Role targets missing after installation.")
+    center_print(4, targets_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
   local choice
 
   while true do
@@ -717,7 +793,15 @@ local function main()
     return
   end
 
-  write_startup(choice.name, target)
+  local wrote, write_err = write_startup(choice.name, target)
+  if not wrote then
+    term.clear()
+    center_print(2, "Failed to write startup.lua.")
+    center_print(4, write_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
 
   term.clear()
   term.setCursorPos(1, 2)
