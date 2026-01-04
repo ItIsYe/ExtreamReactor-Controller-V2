@@ -16,6 +16,18 @@ local ROLE_SOURCE_FILES = {
   REPROCESSING = "src/node/reprocessing_node.lua",
 }
 
+local ROLE_EXPECTED_TARGETS = {
+  MASTER       = "/xreactor/master/master_home.lua",
+  REACTOR      = "/xreactor/node/reactor_node.lua",
+  ENERGY       = "/xreactor/node/energy_node.lua",
+  FUEL         = "/xreactor/node/fuel_node.lua",
+  REPROCESSING = "/xreactor/node/reprocessing_node.lua",
+}
+
+local STARTUP_PATH = "/startup.lua"
+local REACTOR_STARTUP_TARGET = ROLE_EXPECTED_TARGETS.REACTOR
+local REACTOR_STARTUP_CONTENT = string.format("shell.run(%q)", REACTOR_STARTUP_TARGET)
+
 local ROLE_LIST = {
   { name = "MASTER",       description = "Cluster UI and coordinator" },
   { name = "REACTOR",      description = "Controls the main reactor node" },
@@ -139,6 +151,28 @@ local function ensure_free_space(required, context)
   end
 
   return true
+end
+
+local function get_startup_path()
+  local path = STARTUP_PATH
+
+  if type(path) ~= "string" or path == "" then
+    error("Startup path is invalid")
+  end
+
+  if not path:match("^/") then
+    error("Startup path must be absolute: " .. tostring(path))
+  end
+
+  if path ~= "/startup.lua" then
+    error("Startup path must be /startup.lua (got " .. tostring(path) .. ")")
+  end
+
+  if path:match("^/rom") then
+    error("Startup path must be writable; refusing to use ROM location: " .. path)
+  end
+
+  return path
 end
 
 local function write_file(path, reader, expected_size)
@@ -361,7 +395,14 @@ local function build_role_targets(manifest)
     local found
     for _, file in ipairs(manifest.files) do
       if file.src == src then
-        targets[role] = file.dst
+        local expected_dst = ROLE_EXPECTED_TARGETS[role]
+        if type(file.dst) ~= "string" or file.dst == "" then
+          table.insert(missing, string.format("%s (invalid destination for %s)", role, tostring(file.src)))
+        elseif expected_dst and file.dst ~= expected_dst then
+          table.insert(missing, string.format("%s (expected %s, found %s)", role, expected_dst, tostring(file.dst)))
+        else
+          targets[role] = file.dst
+        end
         found = true
         break
       end
@@ -381,9 +422,14 @@ end
 local function verify_role_targets(role_targets)
   local missing = {}
 
-  for role, path in pairs(role_targets) do
+  for role, expected in pairs(ROLE_EXPECTED_TARGETS) do
+    local path = role_targets[role]
     if type(path) ~= "string" or path == "" then
       table.insert(missing, role .. " (invalid target)")
+    elseif expected and path ~= expected then
+      table.insert(missing, string.format("%s (expected %s, found %s)", role, expected, path))
+    elseif not path:match("^/") then
+      table.insert(missing, string.format("%s (startup target must be absolute: %s)", role, path))
     elseif not fs.exists(path) then
       table.insert(missing, string.format("%s (%s)", role, path))
     end
@@ -441,16 +487,14 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  if choice.name == "REACTOR" then
-    local ok, verify_err = verify_reactor_startup(target)
-    if not ok then
-      term.clear()
-      center_print(2, "Reactor autostart verification failed.")
-      center_print(4, verify_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return false
-    end
+  local ok, verify_err = verify_startup_file(choice.name, target)
+  if not ok then
+    term.clear()
+    center_print(2, "Autostart verification failed.")
+    center_print(4, verify_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
   end
 
   term.clear()
@@ -527,81 +571,114 @@ end
 
 local function resolve_target(role_name, role_targets)
   local target = role_targets[role_name]
-  if not target then
+  if type(target) ~= "string" or target == "" then
     return nil, "No destination recorded for role: " .. tostring(role_name)
   end
   if not fs.exists(target) then
     return nil, "Startup target missing: " .. target
   end
+  if not target:match("^/") then
+    return nil, "Startup target must be an absolute path: " .. tostring(target)
+  end
   return target
 end
 
+local function purge_secondary_startup_files()
+  local startup_path = get_startup_path()
+
+  local function walk(path)
+    for _, name in ipairs(fs.list(path)) do
+      local child = fs.combine(path, name)
+      if name == "startup.lua" and child ~= startup_path then
+        fs.delete(child)
+      elseif fs.isDir(child) then
+        walk(child)
+      end
+    end
+  end
+
+  walk("/")
+end
+
 local function write_startup(role_name, target)
+  if role_name ~= "REACTOR" then
+    return nil, "Installer autostart is restricted to the REACTOR role"
+  end
+
+  if target ~= REACTOR_STARTUP_TARGET then
+    return nil, "Reactor startup target mismatch: " .. tostring(target)
+  end
+
   if type(target) ~= "string" or target == "" then
     return nil, "Invalid startup target"
+  end
+
+  if not target:match("^/") then
+    return nil, "Startup target must be an absolute path: " .. target
   end
 
   if not fs.exists(target) then
     return nil, "Startup target missing: " .. target
   end
 
-  local contents = string.format("shell.run(%q)\n", target)
+  purge_secondary_startup_files()
 
-  local handle = fs.open("/startup.lua", "w")
+  local startup_path = get_startup_path()
+
+  local handle = fs.open(startup_path, "w")
   if not handle then
-    error("Cannot open /startup.lua for writing")
+    error("Cannot open " .. startup_path .. " for writing")
   end
-  handle.write(contents)
+  handle.write(REACTOR_STARTUP_CONTENT)
   handle.close()
 
   return true
 end
 
-local function verify_reactor_startup(target)
+local function verify_startup_file(role_name, target)
+  if role_name ~= "REACTOR" then
+    return false, "Startup verification is restricted to the REACTOR role"
+  end
+
+  if target ~= REACTOR_STARTUP_TARGET then
+    return false, "Reactor startup target mismatch: " .. tostring(target)
+  end
+
   if type(target) ~= "string" or target == "" then
-    return false, "Invalid reactor target"
+    return false, "Invalid startup target"
+  end
+
+  if not target:match("^/") then
+    return false, "Startup target must be an absolute path: " .. target
   end
 
   if not fs.exists(target) then
-    return false, "Reactor entrypoint missing: " .. target
+    return false, "Startup target missing: " .. target
   end
 
-  local handle = fs.open("/startup.lua", "r")
+  local startup_path = get_startup_path()
+
+  local handle = fs.open(startup_path, "r")
   if not handle then
-    return false, "Unable to read /startup.lua after writing"
+    return false, "Unable to read " .. startup_path .. " after writing"
   end
 
   local content = handle.readAll() or ""
   handle.close()
 
-  local expected = string.format("shell.run(%q)", target)
-  local trimmed = content:gsub("%s+$", "")
-
-  if trimmed ~= expected then
-    return false, "startup.lua does not launch reactor target correctly"
+  if content ~= REACTOR_STARTUP_CONTENT then
+    return false, "startup.lua must contain exactly: " .. REACTOR_STARTUP_CONTENT
   end
 
   return true
 end
 
+local function verify_reactor_startup(target)
+  return verify_startup_file("REACTOR", target)
+end
+
 local function configure_startup_for_role(role_targets)
-  local choice
-
-  while true do
-    choice = select_role_from_menu()
-    if confirm_role(choice, role_targets) then break end
-  end
-
-  if choice.name == "MASTER" and not is_advanced_computer() then
-    term.clear()
-    center_print(2, "MASTER role requires an Advanced Computer.")
-    center_print(4, "Install on an Advanced Computer and retry.")
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return false
-  end
-
-  local target, err = resolve_target(choice.name, role_targets)
+  local target, err = resolve_target("REACTOR", role_targets)
   if not target then
     term.clear()
     center_print(2, "Cannot configure startup.")
@@ -611,7 +688,7 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  local wrote, write_err = write_startup(choice.name, target)
+  local wrote, write_err = write_startup("REACTOR", target)
   if not wrote then
     term.clear()
     center_print(2, "Failed to write startup.lua.")
@@ -621,21 +698,19 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  if choice.name == "REACTOR" then
-    local ok, verify_err = verify_reactor_startup(target)
-    if not ok then
-      term.clear()
-      center_print(2, "Reactor autostart verification failed.")
-      center_print(4, verify_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return false
-    end
+  local ok, verify_err = verify_startup_file("REACTOR", target)
+  if not ok then
+    term.clear()
+    center_print(2, "Autostart verification failed.")
+    center_print(4, verify_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
   end
 
   term.clear()
   term.setCursorPos(1, 2)
-  center_print(2, "Startup configured for role: " .. choice.name)
+  center_print(2, "Startup configured for REACTOR role.")
   center_print(4, "Target file: " .. target)
   center_print(6, "Reboot the computer to launch the selected role.")
   center_print(8, "Installer will now exit.")
@@ -644,7 +719,9 @@ local function configure_startup_for_role(role_targets)
 end
 
 local function detect_existing_installation(manifest)
-  if fs.exists("/xreactor") or fs.exists("/startup.lua") then
+  local startup_path = get_startup_path()
+
+  if fs.exists("/xreactor") or fs.exists(startup_path) then
     return true
   end
 
@@ -724,6 +801,7 @@ local function installer_self_check()
     configure_startup_for_role = configure_startup_for_role,
     draw_menu = draw_menu,
     select_mode = select_mode,
+    verify_startup_file = verify_startup_file,
     verify_reactor_startup = verify_reactor_startup,
     safe_term_write = safe_term_write,
     safe_print = safe_print,
@@ -742,6 +820,7 @@ local function installer_self_check()
 end
 
 local function main()
+  local startup_path = get_startup_path()
   term.setCursorBlink(false)
 
   local ok, self_check_err = installer_self_check()
@@ -772,9 +851,10 @@ local function main()
   local already_installed = detect_existing_installation(manifest)
   local mode = select_mode(already_installed)
   local role_targets
+  local skip_files = { [startup_path] = true }
 
   if mode == "update" then
-    local required_space = calculate_required_space(manifest)
+    local required_space = calculate_required_space(manifest, { skip = skip_files })
     local has_space, space_err = ensure_free_space(required_space, "update")
     if not has_space then
       term.clear()
@@ -785,7 +865,7 @@ local function main()
       return
     end
 
-    local installed, install_err, updated = install_from_manifest(manifest)
+    local installed, install_err, updated = install_from_manifest(manifest, { skip = skip_files })
     if not installed then
       term.clear()
       center_print(2, "Update failed to download files.")
@@ -817,7 +897,7 @@ local function main()
 
     role_targets = targets
   else
-    local required_space = calculate_required_space(manifest)
+    local required_space = calculate_required_space(manifest, { skip = skip_files })
     local has_space, space_err = ensure_free_space(required_space, "installation")
     if not has_space then
       term.clear()
@@ -828,7 +908,7 @@ local function main()
       return
     end
 
-    local installed, install_err = install_from_manifest(manifest)
+    local installed, install_err = install_from_manifest(manifest, { skip = skip_files })
     if not installed then
       term.clear()
       center_print(2, "Installer failed to download files.")
