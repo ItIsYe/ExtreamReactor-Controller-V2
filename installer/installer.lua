@@ -408,7 +408,7 @@ local function configure_startup_for_role(role_targets)
   local choice
 
   while true do
-    choice = select_role()
+    choice = select_role_from_menu()
     if confirm_role(choice, role_targets) then break end
   end
 
@@ -479,7 +479,7 @@ local function draw_menu(selected)
   end
 end
 
-local function select_role()
+local function select_role_from_menu()
   local selected = 1
   while true do
     draw_menu(selected)
@@ -590,12 +590,19 @@ local function installer_self_check()
     download_file = download_file,
     copy_file = copy_file,
     install_from_manifest = install_from_manifest,
+    calculate_required_space = calculate_required_space,
+    detect_existing_installation = detect_existing_installation,
     write_startup = write_startup,
     build_role_targets = build_role_targets,
-    select_role = select_role,
+    select_role_from_menu = select_role_from_menu,
     confirm_role = confirm_role,
     resolve_target = resolve_target,
+    configure_startup_for_role = configure_startup_for_role,
     draw_menu = draw_menu,
+    select_mode = select_mode,
+    verify_reactor_startup = verify_reactor_startup,
+    safe_term_write = safe_term_write,
+    safe_print = safe_print,
     wait_for_key = wait_for_key,
     is_advanced_computer = is_advanced_computer,
     center_print = center_print,
