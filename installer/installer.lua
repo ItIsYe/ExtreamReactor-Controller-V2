@@ -584,35 +584,61 @@ local function verify_reactor_startup(target)
   return true
 end
 
-local function installer_self_check()
-  local required = {
-    load_manifest = load_manifest,
-    download_file = download_file,
-    copy_file = copy_file,
-    install_from_manifest = install_from_manifest,
-    calculate_required_space = calculate_required_space,
-    detect_existing_installation = detect_existing_installation,
-    write_startup = write_startup,
-    build_role_targets = build_role_targets,
-    select_role_from_menu = select_role_from_menu,
-    confirm_role = confirm_role,
-    resolve_target = resolve_target,
-    configure_startup_for_role = configure_startup_for_role,
-    draw_menu = draw_menu,
-    select_mode = select_mode,
-    verify_reactor_startup = verify_reactor_startup,
-    safe_term_write = safe_term_write,
-    safe_print = safe_print,
-    wait_for_key = wait_for_key,
-    is_advanced_computer = is_advanced_computer,
-    center_print = center_print,
-  }
+local function configure_startup_for_role(role_targets)
+  local choice
 
-  for name, fn in pairs(required) do
-    if type(fn) ~= "function" then
-      return false, "Installer missing required function: " .. name
+  while true do
+    choice = select_role_from_menu()
+    if confirm_role(choice, role_targets) then break end
+  end
+
+  if choice.name == "MASTER" and not is_advanced_computer() then
+    term.clear()
+    center_print(2, "MASTER role requires an Advanced Computer.")
+    center_print(4, "Install on an Advanced Computer and retry.")
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local target, err = resolve_target(choice.name, role_targets)
+  if not target then
+    term.clear()
+    center_print(2, "Cannot configure startup.")
+    center_print(4, err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local wrote, write_err = write_startup(choice.name, target)
+  if not wrote then
+    term.clear()
+    center_print(2, "Failed to write startup.lua.")
+    center_print(4, write_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  if choice.name == "REACTOR" then
+    local ok, verify_err = verify_reactor_startup(target)
+    if not ok then
+      term.clear()
+      center_print(2, "Reactor autostart verification failed.")
+      center_print(4, verify_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return false
     end
   end
+
+  term.clear()
+  term.setCursorPos(1, 2)
+  center_print(2, "Startup configured for role: " .. choice.name)
+  center_print(4, "Target file: " .. target)
+  center_print(6, "Reboot the computer to launch the selected role.")
+  center_print(8, "Installer will now exit.")
 
   return true
 end
@@ -680,6 +706,39 @@ local function select_mode(installed)
       end
     end
   end
+end
+
+local function installer_self_check()
+  local required = {
+    load_manifest = load_manifest,
+    download_file = download_file,
+    copy_file = copy_file,
+    install_from_manifest = install_from_manifest,
+    calculate_required_space = calculate_required_space,
+    detect_existing_installation = detect_existing_installation,
+    write_startup = write_startup,
+    build_role_targets = build_role_targets,
+    select_role_from_menu = select_role_from_menu,
+    confirm_role = confirm_role,
+    resolve_target = resolve_target,
+    configure_startup_for_role = configure_startup_for_role,
+    draw_menu = draw_menu,
+    select_mode = select_mode,
+    verify_reactor_startup = verify_reactor_startup,
+    safe_term_write = safe_term_write,
+    safe_print = safe_print,
+    wait_for_key = wait_for_key,
+    is_advanced_computer = is_advanced_computer,
+    center_print = center_print,
+  }
+
+  for name, fn in pairs(required) do
+    if type(fn) ~= "function" then
+      return false, "Installer missing required function: " .. name
+    end
+  end
+
+  return true
 end
 
 local function main()
