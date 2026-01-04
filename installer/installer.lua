@@ -16,6 +16,14 @@ local ROLE_SOURCE_FILES = {
   REPROCESSING = "src/node/reprocessing_node.lua",
 }
 
+local ROLE_EXPECTED_TARGETS = {
+  MASTER       = "/xreactor/master/master_home.lua",
+  REACTOR      = "/xreactor/node/reactor_node.lua",
+  ENERGY       = "/xreactor/node/energy_node.lua",
+  FUEL         = "/xreactor/node/fuel_node.lua",
+  REPROCESSING = "/xreactor/node/reprocessing_node.lua",
+}
+
 local ROLE_LIST = {
   { name = "MASTER",       description = "Cluster UI and coordinator" },
   { name = "REACTOR",      description = "Controls the main reactor node" },
@@ -361,7 +369,14 @@ local function build_role_targets(manifest)
     local found
     for _, file in ipairs(manifest.files) do
       if file.src == src then
-        targets[role] = file.dst
+        local expected_dst = ROLE_EXPECTED_TARGETS[role]
+        if type(file.dst) ~= "string" or file.dst == "" then
+          table.insert(missing, string.format("%s (invalid destination for %s)", role, tostring(file.src)))
+        elseif expected_dst and file.dst ~= expected_dst then
+          table.insert(missing, string.format("%s (expected %s, found %s)", role, expected_dst, tostring(file.dst)))
+        else
+          targets[role] = file.dst
+        end
         found = true
         break
       end
@@ -381,9 +396,14 @@ end
 local function verify_role_targets(role_targets)
   local missing = {}
 
-  for role, path in pairs(role_targets) do
+  for role, expected in pairs(ROLE_EXPECTED_TARGETS) do
+    local path = role_targets[role]
     if type(path) ~= "string" or path == "" then
       table.insert(missing, role .. " (invalid target)")
+    elseif expected and path ~= expected then
+      table.insert(missing, string.format("%s (expected %s, found %s)", role, expected, path))
+    elseif not path:match("^/") then
+      table.insert(missing, string.format("%s (startup target must be absolute: %s)", role, path))
     elseif not fs.exists(path) then
       table.insert(missing, string.format("%s (%s)", role, path))
     end
@@ -441,16 +461,14 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  if choice.name == "REACTOR" then
-    local ok, verify_err = verify_reactor_startup(target)
-    if not ok then
-      term.clear()
-      center_print(2, "Reactor autostart verification failed.")
-      center_print(4, verify_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return false
-    end
+  local ok, verify_err = verify_startup_file(choice.name, target)
+  if not ok then
+    term.clear()
+    center_print(2, "Autostart verification failed.")
+    center_print(4, verify_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
   end
 
   term.clear()
@@ -527,22 +545,33 @@ end
 
 local function resolve_target(role_name, role_targets)
   local target = role_targets[role_name]
-  if not target then
+  if type(target) ~= "string" or target == "" then
     return nil, "No destination recorded for role: " .. tostring(role_name)
   end
   if not fs.exists(target) then
     return nil, "Startup target missing: " .. target
   end
+  if not target:match("^/") then
+    return nil, "Startup target must be an absolute path: " .. tostring(target)
+  end
   return target
 end
 
 local function write_startup(role_name, target)
+  if type(role_name) ~= "string" or role_name == "" then
+    return nil, "Invalid role name for startup"
+  end
+
   if type(target) ~= "string" or target == "" then
     return nil, "Invalid startup target"
   end
 
   if not fs.exists(target) then
     return nil, "Startup target missing: " .. target
+  end
+
+  if not target:match("^/") then
+    return nil, "Startup target must be an absolute path: " .. target
   end
 
   local contents = string.format("shell.run(%q)\n", target)
@@ -557,13 +586,21 @@ local function write_startup(role_name, target)
   return true
 end
 
-local function verify_reactor_startup(target)
+local function verify_startup_file(role_name, target)
+  if type(role_name) ~= "string" or role_name == "" then
+    return false, "Invalid role for startup verification"
+  end
+
   if type(target) ~= "string" or target == "" then
-    return false, "Invalid reactor target"
+    return false, "Invalid startup target"
+  end
+
+  if not target:match("^/") then
+    return false, "Startup target must be an absolute path: " .. target
   end
 
   if not fs.exists(target) then
-    return false, "Reactor entrypoint missing: " .. target
+    return false, "Startup target missing: " .. target
   end
 
   local handle = fs.open("/startup.lua", "r")
@@ -574,14 +611,34 @@ local function verify_reactor_startup(target)
   local content = handle.readAll() or ""
   handle.close()
 
-  local expected = string.format("shell.run(%q)", target)
-  local trimmed = content:gsub("%s+$", "")
+  local trimmed = content:gsub("^%s+", ""):gsub("%s+$", "")
+  local run_args = trimmed:match("^shell%.run%s*%((.+)%)$")
+  if not run_args then
+    return false, "startup.lua must contain exactly one shell.run call"
+  end
 
-  if trimmed ~= expected then
-    return false, "startup.lua does not launch reactor target correctly"
+  local run_target = run_args:match("^%s*[\"'](.-)[\"']%s*$")
+  if not run_target or run_target == "" then
+    return false, "startup.lua shell.run call is missing a path"
+  end
+
+  if run_target ~= target then
+    return false, "startup.lua does not launch the selected role target"
+  end
+
+  if not run_target:match("^/") then
+    return false, "startup.lua shell.run target must be absolute"
+  end
+
+  if not fs.exists(run_target) then
+    return false, "Startup target missing on disk: " .. run_target
   end
 
   return true
+end
+
+local function verify_reactor_startup(target)
+  return verify_startup_file("REACTOR", target)
 end
 
 local function configure_startup_for_role(role_targets)
@@ -621,16 +678,14 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  if choice.name == "REACTOR" then
-    local ok, verify_err = verify_reactor_startup(target)
-    if not ok then
-      term.clear()
-      center_print(2, "Reactor autostart verification failed.")
-      center_print(4, verify_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return false
-    end
+  local ok, verify_err = verify_startup_file(choice.name, target)
+  if not ok then
+    term.clear()
+    center_print(2, "Autostart verification failed.")
+    center_print(4, verify_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
   end
 
   term.clear()
@@ -724,6 +779,7 @@ local function installer_self_check()
     configure_startup_for_role = configure_startup_for_role,
     draw_menu = draw_menu,
     select_mode = select_mode,
+    verify_startup_file = verify_startup_file,
     verify_reactor_startup = verify_reactor_startup,
     safe_term_write = safe_term_write,
     safe_print = safe_print,
