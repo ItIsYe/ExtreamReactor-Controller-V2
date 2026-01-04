@@ -2,37 +2,11 @@
 
 -- Interactive role selector for XReactor startup configuration
 
-local TEXT_UTILS_PATH = "/xreactor/shared/text.lua"
-
-local function resolve_text_utils()
-  local candidates = { TEXT_UTILS_PATH }
-
-  if shell and shell.getRunningProgram and fs and fs.getDir then
-    local program_dir = fs.getDir(shell.getRunningProgram())
-    if program_dir and program_dir ~= "" then
-      table.insert(candidates, fs.combine("/", fs.combine(program_dir, "src/shared/text.lua")))
-    end
-  end
-
-  table.insert(candidates, "/src/shared/text.lua")
-
-  for _, path in ipairs(candidates) do
-    if path and fs.exists(path) then
-      local ok, mod = pcall(dofile, path)
-      if ok and mod then return mod end
-      error("Unable to load text utilities from " .. path .. ": " .. tostring(mod))
-    end
-  end
-
-  error("Unable to locate text utilities (text.lua). Tried: " .. table.concat(candidates, ", "))
+local function sanitizeText(text)
+  local sanitized = tostring(text or "")
+  sanitized = sanitized:gsub("[%c]", "")
+  return sanitized
 end
-
-local text_utils = resolve_text_utils()
-if not text_utils or not text_utils.sanitizeText then
-  error("text.lua is missing sanitizeText")
-end
-
-local sanitizeText = text_utils.sanitizeText
 
 local ROLE_SOURCE_FILES = {
   MASTER       = "src/master/master_home.lua",
@@ -143,17 +117,53 @@ local function safe_print(text)
   print(sanitizeText(text))
 end
 
-local function write_file(path, contents)
+local SAFETY_MARGIN_BYTES = 1024
+local MIN_PROBE_SIZE = 1024
+local DOWNLOAD_CHUNK_SIZE = 16 * 1024
+
+local function ensure_directory(path)
   local dir = fs.getDir(path)
   if dir and dir ~= "" and not fs.exists(dir) then
     fs.makeDir(dir)
+  end
+end
+
+local function ensure_free_space(required, context)
+  local free = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+  if not free then
+    return true
+  end
+
+  if free < required then
+    return false, string.format("Insufficient disk space for %s (need %d bytes, have %d)", context or "operation", required, free)
+  end
+
+  return true
+end
+
+local function write_file(path, reader, expected_size)
+  ensure_directory(path)
+
+  local existing_size = (fs.exists(path) and fs.getSize and fs.getSize(path)) or 0
+  local estimated_size = expected_size or MIN_PROBE_SIZE
+  local size_delta = math.max(estimated_size - existing_size, 0)
+  local required = size_delta + SAFETY_MARGIN_BYTES
+  local space_ok, space_err = ensure_free_space(required, "writing " .. path)
+  if not space_ok then
+    return false, space_err
   end
 
   local handle = fs.open(path, "w")
   if not handle then
     return false, "Unable to open file for writing: " .. path
   end
-  handle.write(contents)
+
+  while true do
+    local chunk = reader()
+    if not chunk then break end
+    handle.write(chunk)
+  end
+
   handle.close()
   return true
 end
@@ -217,7 +227,38 @@ local function verify_master_installation()
   return true
 end
 
+local function probe_remote_size(base_url, src)
+  local url = string.format("%s/%s", base_url, src)
+  local handle = http.get(url, { Range = "bytes=0-0" })
+  if not handle then
+    return nil
+  end
+
+  local headers = (handle.getResponseHeaders and handle.getResponseHeaders()) or {}
+  local content_length = tonumber(headers["Content-Length"] or headers["content-length"])
+  local body = handle.readAll() or ""
+  handle.close()
+
+  if content_length and content_length > 0 then
+    return content_length
+  end
+
+  if #body > 0 then
+    return math.max(#body, MIN_PROBE_SIZE)
+  end
+
+  return nil
+end
+
 local function download_file(base_url, src, dst)
+  local expected_size = probe_remote_size(base_url, src) or MIN_PROBE_SIZE
+  local existing_size = (fs.exists(dst) and fs.getSize and fs.getSize(dst)) or 0
+  local required = math.max(expected_size - existing_size, 0) + SAFETY_MARGIN_BYTES
+  local space_ok, space_err = ensure_free_space(required, "downloading " .. dst)
+  if not space_ok then
+    return nil, space_err
+  end
+
   local url = string.format("%s/%s", base_url, src)
   local handle, err = http.get(url)
   if not handle then
@@ -233,14 +274,16 @@ local function download_file(base_url, src, dst)
     return nil, "Download failed for " .. src .. " with status " .. tostring(status)
   end
 
-  local contents = handle.readAll() or ""
-  handle.close()
+  local headers = (handle.getResponseHeaders and handle.getResponseHeaders()) or {}
+  local expected_size = tonumber(headers["Content-Length"] or headers["content-length"])
 
-  if contents == "" then
-    return nil, "Empty content for " .. src
+  local function reader()
+    return handle.read(DOWNLOAD_CHUNK_SIZE)
   end
 
-  local ok, write_err = write_file(dst, contents)
+  local ok, write_err = write_file(dst, reader, expected_size)
+  handle.close()
+
   if not ok then
     return nil, write_err
   end
@@ -253,19 +296,41 @@ local function copy_file(src, dst)
     return nil, "Source missing: " .. src
   end
 
+  local expected_size = fs.getSize and fs.getSize(src) or nil
   local handle = fs.open(src, "r")
   if not handle then
     return nil, "Unable to read source file: " .. src
   end
-  local contents = handle.readAll() or ""
+
+  local function reader()
+    return handle.read(DOWNLOAD_CHUNK_SIZE)
+  end
+
+  local ok, write_err = write_file(dst, reader, expected_size)
   handle.close()
 
-  local ok, write_err = write_file(dst, contents)
   if not ok then
     return nil, write_err
   end
 
   return dst
+end
+
+local function calculate_required_space(manifest, opts)
+  opts = opts or {}
+  local skip = opts.skip or {}
+  local total = 0
+
+  for _, file in ipairs(manifest.files) do
+    if not skip[file.dst] then
+      local remote_size = probe_remote_size(manifest.base_url, file.src) or MIN_PROBE_SIZE
+      local existing_size = (fs.exists(file.dst) and fs.getSize and fs.getSize(file.dst)) or 0
+      local additional_needed = math.max(remote_size - existing_size, 0)
+      total = total + additional_needed
+    end
+  end
+
+  return total + SAFETY_MARGIN_BYTES
 end
 
 local function install_from_manifest(manifest, opts)
@@ -290,15 +355,45 @@ end
 
 local function build_role_targets(manifest)
   local targets = {}
+  local missing = {}
+
   for role, src in pairs(ROLE_SOURCE_FILES) do
+    local found
     for _, file in ipairs(manifest.files) do
       if file.src == src then
         targets[role] = file.dst
+        found = true
         break
       end
     end
+    if not found then
+      table.insert(missing, role)
+    end
   end
+
+  if #missing > 0 then
+    return nil, "Installer manifest missing targets for roles: " .. table.concat(missing, ", ")
+  end
+
   return targets
+end
+
+local function verify_role_targets(role_targets)
+  local missing = {}
+
+  for role, path in pairs(role_targets) do
+    if type(path) ~= "string" or path == "" then
+      table.insert(missing, role .. " (invalid target)")
+    elseif not fs.exists(path) then
+      table.insert(missing, string.format("%s (%s)", role, path))
+    end
+  end
+
+  if #missing > 0 then
+    return false, "Missing startup targets: " .. table.concat(missing, ", ")
+  end
+
+  return true
 end
 
 local function is_advanced_computer()
@@ -307,6 +402,65 @@ end
 
 local function wait_for_key()
   os.pullEvent("key")
+end
+
+local function configure_startup_for_role(role_targets)
+  local choice
+
+  while true do
+    choice = select_role_from_menu()
+    if confirm_role(choice, role_targets) then break end
+  end
+
+  if choice.name == "MASTER" and not is_advanced_computer() then
+    term.clear()
+    center_print(2, "MASTER role requires an Advanced Computer.")
+    center_print(4, "Install on an Advanced Computer and retry.")
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local target, err = resolve_target(choice.name, role_targets)
+  if not target then
+    term.clear()
+    center_print(2, "Cannot configure startup.")
+    center_print(4, err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local wrote, write_err = write_startup(choice.name, target)
+  if not wrote then
+    term.clear()
+    center_print(2, "Failed to write startup.lua.")
+    center_print(4, write_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  if choice.name == "REACTOR" then
+    local ok, verify_err = verify_reactor_startup(target)
+    if not ok then
+      term.clear()
+      center_print(2, "Reactor autostart verification failed.")
+      center_print(4, verify_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return false
+    end
+  end
+
+  term.clear()
+  term.setCursorPos(1, 2)
+  center_print(2, "Startup configured for role: " .. choice.name)
+  center_print(4, "Target file: " .. target)
+  center_print(6, "Reboot the computer to launch the selected role.")
+  center_print(8, "Installer will now exit.")
+
+  return true
 end
 
 local function draw_menu(selected)
@@ -325,7 +479,7 @@ local function draw_menu(selected)
   end
 end
 
-local function select_role()
+local function select_role_from_menu()
   local selected = 1
   while true do
     draw_menu(selected)
@@ -383,32 +537,15 @@ local function resolve_target(role_name, role_targets)
 end
 
 local function write_startup(role_name, target)
-  local contents = string.format([[-- Auto-generated startup for role %s
-local target = %q
+  if type(target) ~= "string" or target == "" then
+    return nil, "Invalid startup target"
+  end
 
-package.path = table.concat({
-  "/xreactor/?.lua",
-  "/xreactor/?/init.lua",
-  "/xreactor/?/?.lua",
-  "/?.lua",
-}, ";")
+  if not fs.exists(target) then
+    return nil, "Startup target missing: " .. target
+  end
 
-if not fs.exists(target) then
-  safe_print("Startup target missing: " .. target)
-  return
-end
-
-local loader = loadfile(target)
-if not loader then
-  safe_print("Unable to load " .. target)
-  return
-end
-
-local ok, err = pcall(loader)
-if not ok then
-  safe_print("Error while running " .. target .. ": " .. tostring(err))
-end
-]], role_name, target)
+  local contents = string.format("shell.run(%q)\n", target)
 
   local handle = fs.open("/startup.lua", "w")
   if not handle then
@@ -416,6 +553,35 @@ end
   end
   handle.write(contents)
   handle.close()
+
+  return true
+end
+
+local function verify_reactor_startup(target)
+  if type(target) ~= "string" or target == "" then
+    return false, "Invalid reactor target"
+  end
+
+  if not fs.exists(target) then
+    return false, "Reactor entrypoint missing: " .. target
+  end
+
+  local handle = fs.open("/startup.lua", "r")
+  if not handle then
+    return false, "Unable to read /startup.lua after writing"
+  end
+
+  local content = handle.readAll() or ""
+  handle.close()
+
+  local expected = string.format("shell.run(%q)", target)
+  local trimmed = content:gsub("%s+$", "")
+
+  if trimmed ~= expected then
+    return false, "startup.lua does not launch reactor target correctly"
+  end
+
+  return true
 end
 
 local function installer_self_check()
@@ -424,12 +590,19 @@ local function installer_self_check()
     download_file = download_file,
     copy_file = copy_file,
     install_from_manifest = install_from_manifest,
+    calculate_required_space = calculate_required_space,
+    detect_existing_installation = detect_existing_installation,
     write_startup = write_startup,
     build_role_targets = build_role_targets,
-    select_role = select_role,
+    select_role_from_menu = select_role_from_menu,
     confirm_role = confirm_role,
     resolve_target = resolve_target,
+    configure_startup_for_role = configure_startup_for_role,
     draw_menu = draw_menu,
+    select_mode = select_mode,
+    verify_reactor_startup = verify_reactor_startup,
+    safe_term_write = safe_term_write,
+    safe_print = safe_print,
     wait_for_key = wait_for_key,
     is_advanced_computer = is_advanced_computer,
     center_print = center_print,
@@ -539,14 +712,21 @@ local function main()
 
   local already_installed = detect_existing_installation(manifest)
   local mode = select_mode(already_installed)
+  local role_targets
 
   if mode == "update" then
-    local skip_paths = {}
-    if fs.exists("/startup.lua") then
-      skip_paths["/startup.lua"] = true
+    local required_space = calculate_required_space(manifest)
+    local has_space, space_err = ensure_free_space(required_space, "update")
+    if not has_space then
+      term.clear()
+      center_print(2, "Update aborted: insufficient space.")
+      center_print(4, space_err)
+      center_print(6, "Free up space and retry.")
+      wait_for_key()
+      return
     end
 
-    local installed, install_err, updated = install_from_manifest(manifest, { skip = skip_paths })
+    local installed, install_err, updated = install_from_manifest(manifest)
     if not installed then
       term.clear()
       center_print(2, "Update failed to download files.")
@@ -556,84 +736,84 @@ local function main()
       return
     end
 
-    term.clear()
-    center_print(2, "Update complete.")
-    center_print(4, "Updated files:")
-    local line = 5
-    for _, path in ipairs(updated) do
-      term.setCursorPos(4, line)
-      term.clearLine()
-      safe_term_write(path)
-      line = line + 1
-      if line > select(2, term.getSize()) then break end
+    local targets, role_targets_err = build_role_targets(manifest)
+    if not targets then
+      term.clear()
+      center_print(2, "Installer manifest invalid for roles.")
+      center_print(4, role_targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
     end
 
-    if #updated == 0 then
-      term.setCursorPos(4, line)
-      safe_term_write("No files needed updating.")
+    local targets_ok, targets_err = verify_role_targets(targets)
+    if not targets_ok then
+      term.clear()
+      center_print(2, "Role targets missing after update.")
+      center_print(4, targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
     end
 
-    term.setCursorPos(1, line + 2)
-    center_print(line + 2, "Existing configuration preserved.")
-    center_print(line + 4, "Installer will now exit.")
-    return
+    role_targets = targets
+  else
+    local required_space = calculate_required_space(manifest)
+    local has_space, space_err = ensure_free_space(required_space, "installation")
+    if not has_space then
+      term.clear()
+      center_print(2, "Installation aborted: insufficient space.")
+      center_print(4, space_err)
+      center_print(6, "Free up space and retry.")
+      wait_for_key()
+      return
+    end
+
+    local installed, install_err = install_from_manifest(manifest)
+    if not installed then
+      term.clear()
+      center_print(2, "Installer failed to download files.")
+      center_print(4, install_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    local master_ok, master_err = verify_master_installation()
+    if not master_ok then
+      term.clear()
+      center_print(2, "Master installation incomplete.")
+      center_print(4, master_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    local targets, role_targets_err = build_role_targets(manifest)
+    if not targets then
+      term.clear()
+      center_print(2, "Installer manifest invalid for roles.")
+      center_print(4, role_targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    local targets_ok, targets_err = verify_role_targets(targets)
+    if not targets_ok then
+      term.clear()
+      center_print(2, "Role targets missing after installation.")
+      center_print(4, targets_err)
+      center_print(6, "Press any key to exit.")
+      wait_for_key()
+      return
+    end
+
+    role_targets = targets
   end
 
-  local installed, install_err = install_from_manifest(manifest)
-  if not installed then
-    term.clear()
-    center_print(2, "Installer failed to download files.")
-    center_print(4, install_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local master_ok, master_err = verify_master_installation()
-  if not master_ok then
-    term.clear()
-    center_print(2, "Master installation incomplete.")
-    center_print(4, master_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local role_targets = build_role_targets(manifest)
-  local choice
-
-  while true do
-    choice = select_role()
-    if confirm_role(choice, role_targets) then break end
-  end
-
-  if choice.name == "MASTER" and not is_advanced_computer() then
-    term.clear()
-    center_print(2, "MASTER role requires an Advanced Computer.")
-    center_print(4, "Install on an Advanced Computer and retry.")
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  local target, err = resolve_target(choice.name, role_targets)
-  if not target then
-    term.clear()
-    center_print(2, "Cannot configure startup.")
-    center_print(4, err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return
-  end
-
-  write_startup(choice.name, target)
-
-  term.clear()
-  term.setCursorPos(1, 2)
-  center_print(2, "Startup configured for role: " .. choice.name)
-  center_print(4, "Target file: " .. target)
-  center_print(6, "Reboot the computer to launch the selected role.")
-  center_print(8, "Installer will now exit.")
+  local configured = configure_startup_for_role(role_targets)
+  if not configured then return end
 end
 
 local ok, err = pcall(main)
