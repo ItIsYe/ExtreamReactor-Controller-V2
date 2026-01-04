@@ -127,6 +127,18 @@ local function detect_monitors()
   return monitors
 end
 
+local function apply_autoscale(mon)
+  if not (AUTOSCALE_CFG.enabled and GUI and GUI.autoscale) then return false end
+  GUI.autoscale(mon, {
+    target_w = AUTOSCALE_CFG.target_w or (AUTOSCALE_CFG.target and AUTOSCALE_CFG.target.w) or 80,
+    target_h = AUTOSCALE_CFG.target_h or (AUTOSCALE_CFG.target and AUTOSCALE_CFG.target.h) or 25,
+    min_scale = AUTOSCALE_CFG.min_scale,
+    max_scale = AUTOSCALE_CFG.max_scale,
+    step = AUTOSCALE_CFG.step,
+  })
+  return true
+end
+
 local function prepare_monitor(mon, name)
   local scale = monitor_scale_for(name)
   if GUI and GUI.apply_text_scale then
