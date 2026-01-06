@@ -80,43 +80,43 @@ local EMBEDDED_MANIFEST = {
 
   files = {
     -- Shared
-    { src = "src/shared/text.lua",              dst = "/xreactor/shared/text.lua" },
-    { src = "src/shared/protocol.lua",           dst = "/xreactor/shared/protocol.lua" },
-    { src = "src/shared/identity.lua",           dst = "/xreactor/shared/identity.lua" },
-    { src = "src/shared/log.lua",                dst = "/xreactor/shared/log.lua" },
-    { src = "src/shared/topbar.lua",             dst = "/xreactor/shared/topbar.lua" },
-    { src = "src/shared/network_dispatcher.lua", dst = "/xreactor/shared/network_dispatcher.lua" },
-    { src = "src/shared/node_state_machine.lua", dst = "/xreactor/shared/node_state_machine.lua" },
-    { src = "src/shared/node_runtime.lua",       dst = "/xreactor/shared/node_runtime.lua" },
-    { src = "src/shared/local_state_store.lua",  dst = "/xreactor/shared/local_state_store.lua" },
-    { src = "xreactor/shared/gui.lua",           dst = "/xreactor/shared/gui.lua" },
+    { src = "src/shared/text.lua",              dst = "/xreactor/shared/text.lua",              size = 355 },
+    { src = "src/shared/protocol.lua",           dst = "/xreactor/shared/protocol.lua",         size = 4603 },
+    { src = "src/shared/identity.lua",           dst = "/xreactor/shared/identity.lua",         size = 1408 },
+    { src = "src/shared/log.lua",                dst = "/xreactor/shared/log.lua",              size = 1169 },
+    { src = "src/shared/topbar.lua",             dst = "/xreactor/shared/topbar.lua",           size = 3639 },
+    { src = "src/shared/network_dispatcher.lua", dst = "/xreactor/shared/network_dispatcher.lua", size = 4917 },
+    { src = "src/shared/node_state_machine.lua", dst = "/xreactor/shared/node_state_machine.lua", size = 1880 },
+    { src = "src/shared/node_runtime.lua",       dst = "/xreactor/shared/node_runtime.lua",     size = 8810 },
+    { src = "src/shared/local_state_store.lua",  dst = "/xreactor/shared/local_state_store.lua", size = 1856 },
+    { src = "xreactor/shared/gui.lua",           dst = "/xreactor/shared/gui.lua",              size = 12411 },
 
     -- Node Core
-    { src = "src/node/node_core.lua",            dst = "/xreactor/node/node_core.lua" },
+    { src = "src/node/node_core.lua",            dst = "/xreactor/node/node_core.lua",          size = 14745 },
 
     -- Master UI
-    { src = "src/master/master_core.lua",        dst = "/xreactor/master/master_core.lua" },
-    { src = "src/master/master_model.lua",       dst = "/xreactor/master/master_model.lua" },
-    { src = "src/master/master_home.lua",        dst = "/xreactor/master/master_home.lua" },
-    { src = "src/master/fuel_panel.lua",         dst = "/xreactor/master/fuel_panel.lua" },
-    { src = "src/master/waste_panel.lua",        dst = "/xreactor/master/waste_panel.lua" },
-    { src = "src/master/alarm_center.lua",       dst = "/xreactor/master/alarm_center.lua" },
-    { src = "src/master/alarm_panel.lua",        dst = "/xreactor/master/alarm_panel.lua" },
-    { src = "src/master/overview_panel.lua",     dst = "/xreactor/master/overview_panel.lua" },
+    { src = "src/master/master_core.lua",        dst = "/xreactor/master/master_core.lua",      size = 6697 },
+    { src = "src/master/master_model.lua",       dst = "/xreactor/master/master_model.lua",     size = 23156 },
+    { src = "src/master/master_home.lua",        dst = "/xreactor/master/master_home.lua",      size = 13670 },
+    { src = "src/master/fuel_panel.lua",         dst = "/xreactor/master/fuel_panel.lua",       size = 3363 },
+    { src = "src/master/waste_panel.lua",        dst = "/xreactor/master/waste_panel.lua",      size = 3250 },
+    { src = "src/master/alarm_center.lua",       dst = "/xreactor/master/alarm_center.lua",     size = 5753 },
+    { src = "src/master/alarm_panel.lua",        dst = "/xreactor/master/alarm_panel.lua",      size = 4994 },
+    { src = "src/master/overview_panel.lua",     dst = "/xreactor/master/overview_panel.lua",   size = 5574 },
 
     -- Tools & UI Map
-    { src = "src/ui_map.lua",                     dst = "/xreactor/ui_map.lua" },
-    { src = "src/tools/build_ui_map.lua",         dst = "/xreactor/tools/build_ui_map.lua" },
-    { src = "src/tools/self_test.lua",            dst = "/xreactor/tools/self_test.lua" },
+    { src = "src/ui_map.lua",                     dst = "/xreactor/ui_map.lua",                  size = 571 },
+    { src = "src/tools/build_ui_map.lua",         dst = "/xreactor/tools/build_ui_map.lua",      size = 2872 },
+    { src = "src/tools/self_test.lua",            dst = "/xreactor/tools/self_test.lua",         size = 1570 },
 
     -- Universal Autostart
-    { src = "startup.lua",                        dst = "/startup.lua" },
+    { src = "startup.lua",                        dst = "/startup.lua",                           size = 45 },
 
     -- Node Runtimes
-    { src = "src/node/reactor_node.lua",          dst = "/xreactor/node/reactor_node.lua" },
-    { src = "src/node/fuel_node.lua",             dst = "/xreactor/node/fuel_node.lua" },
-    { src = "src/node/reprocessing_node.lua",     dst = "/xreactor/node/reprocessing_node.lua" },
-    { src = "src/node/energy_node.lua",           dst = "/xreactor/node/energy_node.lua" },
+    { src = "src/node/reactor_node.lua",          dst = "/xreactor/node/reactor_node.lua",       size = 11157 },
+    { src = "src/node/fuel_node.lua",             dst = "/xreactor/node/fuel_node.lua",          size = 6278 },
+    { src = "src/node/reprocessing_node.lua",     dst = "/xreactor/node/reprocessing_node.lua",  size = 2453 },
+    { src = "src/node/energy_node.lua",           dst = "/xreactor/node/energy_node.lua",        size = 6166 },
   },
 }
 
@@ -138,7 +138,7 @@ end
 
 local SAFETY_MARGIN_BYTES = 1024
 local MIN_PROBE_SIZE = 1024
-local DOWNLOAD_CHUNK_SIZE = 16 * 1024
+local DOWNLOAD_CHUNK_SIZE = 2048
 
 local function ensure_directory(path)
   local dir = fs.getDir(path)
@@ -202,7 +202,14 @@ local function write_file(path, reader, expected_size)
   while true do
     local chunk = reader()
     if not chunk then break end
-    handle.write(chunk)
+
+    if #chunk > DOWNLOAD_CHUNK_SIZE then
+      for piece in chunk:gmatch(".{1," .. DOWNLOAD_CHUNK_SIZE .. "}") do
+        handle.write(piece)
+      end
+    else
+      handle.write(chunk)
+    end
   end
 
   handle.close()
@@ -229,7 +236,12 @@ local function load_manifest()
     if not file.src or not file.dst then
       return nil, "Installer manifest contains an invalid file entry"
     end
-    table.insert(manifest.files, { src = file.src, dst = file.dst })
+
+    if type(file.size) ~= "number" or file.size <= 0 then
+      return nil, "Installer manifest missing size for " .. tostring(file.src)
+    end
+
+    table.insert(manifest.files, { src = file.src, dst = file.dst, size = file.size })
   end
 
   return manifest
@@ -291,13 +303,11 @@ local function probe_remote_size(base_url, src)
   return nil
 end
 
-local function download_file(base_url, src, dst)
-  local expected_size = probe_remote_size(base_url, src) or MIN_PROBE_SIZE
-  local existing_size = (fs.exists(dst) and fs.getSize and fs.getSize(dst)) or 0
-  local required = math.max(expected_size - existing_size, 0) + SAFETY_MARGIN_BYTES
-  local space_ok, space_err = ensure_free_space(required, "downloading " .. dst)
-  if not space_ok then
-    return nil, space_err
+local function download_file(base_url, src, dst, expected_size)
+  local required_bytes = math.max(expected_size or MIN_PROBE_SIZE, MIN_PROBE_SIZE) + SAFETY_MARGIN_BYTES
+  local free = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+  if free and free < required_bytes then
+    return nil, "Insufficient disk space: need " .. required_bytes
   end
 
   local url = string.format("%s/%s", base_url, src)
@@ -316,18 +326,26 @@ local function download_file(base_url, src, dst)
   end
 
   local headers = (handle.getResponseHeaders and handle.getResponseHeaders()) or {}
-  local expected_size = tonumber(headers["Content-Length"] or headers["content-length"])
+  local content_size = tonumber(headers["Content-Length"] or headers["content-length"]) or expected_size
+
+  local tmp_path = dst .. ".tmp"
+  if fs.exists(tmp_path) then fs.delete(tmp_path) end
 
   local function reader()
     return handle.read(DOWNLOAD_CHUNK_SIZE)
   end
 
-  local ok, write_err = write_file(dst, reader, expected_size)
+  local ok, write_err = write_file(tmp_path, reader, content_size)
   handle.close()
 
   if not ok then
+    fs.delete(tmp_path)
     return nil, write_err
   end
+
+  if fs.exists(dst) then fs.delete(dst) end
+  fs.move(tmp_path, dst)
+  fs.delete(tmp_path)
 
   return dst
 end
@@ -364,10 +382,8 @@ local function calculate_required_space(manifest, opts)
 
   for _, file in ipairs(manifest.files) do
     if not skip[file.dst] then
-      local remote_size = probe_remote_size(manifest.base_url, file.src) or MIN_PROBE_SIZE
-      local existing_size = (fs.exists(file.dst) and fs.getSize and fs.getSize(file.dst)) or 0
-      local additional_needed = math.max(remote_size - existing_size, 0)
-      total = total + additional_needed
+      local size = tonumber(file.size) or MIN_PROBE_SIZE
+      total = total + size
     end
   end
 
@@ -378,15 +394,35 @@ local function install_from_manifest(manifest, opts)
   opts = opts or {}
   local skip = opts.skip or {}
   local updated = {}
+  local downloaded = {}
+
+  local required_space = calculate_required_space(manifest, { skip = skip })
+  local free = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+  if free and free < required_space then
+    return nil, "Insufficient disk space: need " .. required_space .. " bytes (have " .. tostring(free) .. ")", updated
+  end
 
   for _, file in ipairs(manifest.files) do
+    local expected_size = tonumber(file.size) or MIN_PROBE_SIZE
+
     if skip[file.dst] then
       -- Preserve user-managed files during update
+    elseif downloaded[file.dst] then
+      -- Avoid downloading the same destination twice
+    elseif fs.exists(file.dst) and fs.getSize and fs.getSize(file.dst) == expected_size then
+      downloaded[file.dst] = true
     else
-      local path, err = download_file(manifest.base_url, file.src, file.dst)
+      local free_now = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+      local required = expected_size + SAFETY_MARGIN_BYTES
+      if free_now and free_now < required then
+        return nil, "Insufficient disk space: need " .. required .. " bytes (have " .. tostring(free_now) .. ")", updated
+      end
+
+      local path, err = download_file(manifest.base_url, file.src, file.dst, expected_size)
       if not path then
         return nil, err, updated
       end
+      downloaded[file.dst] = true
       table.insert(updated, path)
     end
   end
