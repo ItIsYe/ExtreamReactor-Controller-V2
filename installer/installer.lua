@@ -574,6 +574,9 @@ local function resolve_target(role_name, role_targets)
   if type(target) ~= "string" or target == "" then
     return nil, "No destination recorded for role: " .. tostring(role_name)
   end
+  if target:match("^/rom") then
+    return nil, "Startup target must be writable; refusing to use ROM location: " .. target
+  end
   if not fs.exists(target) then
     return nil, "Startup target missing: " .. target
   end
@@ -589,7 +592,9 @@ local function purge_secondary_startup_files()
   local function walk(path)
     for _, name in ipairs(fs.list(path)) do
       local child = fs.combine(path, name)
-      if name == "startup.lua" and child ~= startup_path then
+      if child:match("^/rom") then
+        -- Treat ROM as strictly read-only; never touch or traverse it.
+      elseif name == "startup.lua" and child ~= startup_path then
         fs.delete(child)
       elseif fs.isDir(child) then
         walk(child)
