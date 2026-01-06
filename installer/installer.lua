@@ -9,17 +9,19 @@ local function sanitizeText(text)
 end
 
 local ROLE_SOURCE_FILES = {
-  MASTER  = "src/master/master_home.lua",
-  REACTOR = "src/node/reactor_node.lua",
-  TURBINE = "src/node/energy_node.lua",
-  ALARM   = "src/master/alarm_center.lua",
+  MASTER        = "src/master/master_home.lua",
+  REACTOR       = "src/node/reactor_node.lua",
+  ENERGY        = "src/node/energy_node.lua",
+  FUEL          = "src/node/fuel_node.lua",
+  REPROCESSING  = "src/node/reprocessing_node.lua",
 }
 
 local ROLE_EXPECTED_TARGETS = {
-  MASTER  = "/xreactor/master/master_home.lua",
-  REACTOR = "/xreactor/node/reactor_node.lua",
-  TURBINE = "/xreactor/node/energy_node.lua",
-  ALARM   = "/xreactor/master/alarm_center.lua",
+  MASTER        = "/xreactor/master/master_home.lua",
+  REACTOR       = "/xreactor/node/reactor_node.lua",
+  ENERGY        = "/xreactor/node/energy_node.lua",
+  FUEL          = "/xreactor/node/fuel_node.lua",
+  REPROCESSING  = "/xreactor/node/reprocessing_node.lua",
 }
 
 local STARTUP_PATH = "/startup.lua"
@@ -29,10 +31,11 @@ local function build_startup_content(target)
 end
 
 local ROLE_LIST = {
-  { name = "MASTER",  description = "Cluster UI and coordinator" },
-  { name = "REACTOR", description = "Controls the main reactor node" },
-  { name = "TURBINE", description = "Manages turbine power transfer" },
-  { name = "ALARM",   description = "Alarm console" },
+  { name = "MASTER",       description = "Master UI" },
+  { name = "REACTOR",      description = "Reactor Node" },
+  { name = "ENERGY",       description = "Energy Node" },
+  { name = "FUEL",         description = "Fuel Node" },
+  { name = "REPROCESSING", description = "Reprocessing Node" },
 }
 
 local REQUIRED_MASTER_FILES = {
@@ -869,6 +872,16 @@ local function main()
     return
   end
 
+  local manifest_role_targets, manifest_role_err = build_role_targets(manifest)
+  if not manifest_role_targets then
+    term.clear()
+    center_print(2, "Installer manifest invalid for roles.")
+    center_print(4, manifest_role_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
   local manifest_ok, manifest_missing_err = ensure_manifest_has_master_files(manifest)
   if not manifest_ok then
     term.clear()
@@ -906,17 +919,7 @@ local function main()
       return
     end
 
-    local targets, role_targets_err = build_role_targets(manifest)
-    if not targets then
-      term.clear()
-      center_print(2, "Installer manifest invalid for roles.")
-      center_print(4, role_targets_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return
-    end
-
-    local targets_ok, targets_err = verify_role_targets(targets)
+    local targets_ok, targets_err = verify_role_targets(manifest_role_targets)
     if not targets_ok then
       term.clear()
       center_print(2, "Role targets missing after update.")
@@ -926,7 +929,7 @@ local function main()
       return
     end
 
-    role_targets = targets
+    role_targets = manifest_role_targets
   else
     local required_space = calculate_required_space(manifest, { skip = skip_files })
     local has_space, space_err = ensure_free_space(required_space, "installation")
@@ -959,17 +962,7 @@ local function main()
       return
     end
 
-    local targets, role_targets_err = build_role_targets(manifest)
-    if not targets then
-      term.clear()
-      center_print(2, "Installer manifest invalid for roles.")
-      center_print(4, role_targets_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return
-    end
-
-    local targets_ok, targets_err = verify_role_targets(targets)
+    local targets_ok, targets_err = verify_role_targets(manifest_role_targets)
     if not targets_ok then
       term.clear()
       center_print(2, "Role targets missing after installation.")
@@ -979,7 +972,7 @@ local function main()
       return
     end
 
-    role_targets = targets
+    role_targets = manifest_role_targets
   end
 
   local configured = configure_startup_for_role(role_targets)

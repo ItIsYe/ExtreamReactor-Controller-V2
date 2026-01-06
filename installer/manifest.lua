@@ -41,9 +41,9 @@ return {
 
     -- Node Runtimes
     { src = "src/node/reactor_node.lua",        dst = "/xreactor/node/reactor_node.lua" },
+    { src = "src/node/energy_node.lua",         dst = "/xreactor/node/energy_node.lua" },
     { src = "src/node/fuel_node.lua",           dst = "/xreactor/node/fuel_node.lua" },
     { src = "src/node/reprocessing_node.lua",   dst = "/xreactor/node/reprocessing_node.lua" },
-    { src = "src/node/energy_node.lua",         dst = "/xreactor/node/energy_node.lua" },
   },
 }
 
