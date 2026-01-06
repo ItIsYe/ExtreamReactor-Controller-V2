@@ -32,7 +32,7 @@ local ROLE_EXPECTED_TARGETS = {
 local STARTUP_PATH = "/startup.lua"
 
 local function build_startup_content(target)
-  return string.format("shell.run(%q)", target)
+  return 'shell.run("' .. target .. '")'
 end
 
 local ROLE_LIST = {
@@ -663,10 +663,15 @@ local function write_startup(role_name, target)
   purge_secondary_startup_files()
 
   local startup_path = get_startup_path()
+  if fs.exists("/rom/startup.lua") then
+    -- Never open or modify ROM startup; it is read-only and must be ignored.
+  end
+
   local handle = fs.open(startup_path, "w")
   if not handle then
-    error("Cannot open " .. startup_path .. " for writing")
+    return nil, "Cannot open /startup.lua for writing; access denied"
   end
+
   handle.write(build_startup_content(target))
   handle.close()
 
