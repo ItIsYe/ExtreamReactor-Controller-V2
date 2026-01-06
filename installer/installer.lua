@@ -8,11 +8,20 @@ local function sanitizeText(text)
   return sanitized
 end
 
+local lua_select = select
+
 -- Provide a deterministic select implementation in case the runtime has
 -- stripped the standard Lua select function from the environment.
 local function safe_select(n, ...)
-  if type(n) == "string" and n == "#" then
-    return select and select("#", ...) or #({ ... })
+  if type(n) == "string" then
+    if n == "#" then
+      if type(lua_select) == "function" then
+        return lua_select("#", ...)
+      end
+      local args = { ... }
+      return #args
+    end
+    error("bad argument #1 to 'select' (number expected, got string)")
   end
 
   if type(n) ~= "number" then
@@ -28,7 +37,7 @@ local function safe_select(n, ...)
   return table.unpack(args, n, len)
 end
 
-if type(select) ~= "function" then
+if type(lua_select) ~= "function" then
   _G.select = safe_select
 end
 
