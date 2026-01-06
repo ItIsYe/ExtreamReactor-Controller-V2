@@ -8,6 +8,30 @@ local function sanitizeText(text)
   return sanitized
 end
 
+-- Provide a deterministic select implementation in case the runtime has
+-- stripped the standard Lua select function from the environment.
+local function safe_select(n, ...)
+  if type(n) == "string" and n == "#" then
+    return select and select("#", ...) or #({ ... })
+  end
+
+  if type(n) ~= "number" then
+    error("bad argument #1 to 'select' (number expected, got " .. type(n) .. ")")
+  end
+
+  local args = { ... }
+  local len = #args
+  if n < 1 or n > len then
+    error("bad argument #1 to 'select' (index out of range)")
+  end
+
+  return table.unpack(args, n, len)
+end
+
+if type(select) ~= "function" then
+  _G.select = safe_select
+end
+
 local ROLE_SOURCE_FILES = {
   MASTER        = "src/master/master_home.lua",
   REACTOR       = "src/node/reactor_node.lua",
