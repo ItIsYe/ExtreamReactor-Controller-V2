@@ -9,31 +9,38 @@ local function sanitizeText(text)
 end
 
 local ROLE_SOURCE_FILES = {
-  MASTER       = "src/master/master_home.lua",
-  REACTOR      = "src/node/reactor_node.lua",
-  ENERGY       = "src/node/energy_node.lua",
-  FUEL         = "src/node/fuel_node.lua",
-  REPROCESSING = "src/node/reprocessing_node.lua",
+  MASTER        = "src/master/master_home.lua",
+  REACTOR       = "src/node/reactor_node.lua",
+  ENERGY        = "src/node/energy_node.lua",
+  FUEL          = "src/node/fuel_node.lua",
+  REPROCESSING  = "src/node/reprocessing_node.lua",
+}
+
+local FORBIDDEN_NODE_PATHS = {
+  ["src/node/turbine_node.lua"]       = "Turbine control is handled by reactor_node.lua; remove turbine_node.lua",
+  ["/xreactor/node/turbine_node.lua"] = "Turbine control must be driven by reactor_node.lua; turbine_node.lua is not supported",
 }
 
 local ROLE_EXPECTED_TARGETS = {
-  MASTER       = "/xreactor/master/master_home.lua",
-  REACTOR      = "/xreactor/node/reactor_node.lua",
-  ENERGY       = "/xreactor/node/energy_node.lua",
-  FUEL         = "/xreactor/node/fuel_node.lua",
-  REPROCESSING = "/xreactor/node/reprocessing_node.lua",
+  MASTER        = "/xreactor/master/master_home.lua",
+  REACTOR       = "/xreactor/node/reactor_node.lua",
+  ENERGY        = "/xreactor/node/energy_node.lua",
+  FUEL          = "/xreactor/node/fuel_node.lua",
+  REPROCESSING  = "/xreactor/node/reprocessing_node.lua",
 }
 
 local STARTUP_PATH = "/startup.lua"
-local REACTOR_STARTUP_TARGET = ROLE_EXPECTED_TARGETS.REACTOR
-local REACTOR_STARTUP_CONTENT = string.format("shell.run(%q)", REACTOR_STARTUP_TARGET)
+
+local function build_startup_content(target)
+  return 'shell.run("' .. target .. '")'
+end
 
 local ROLE_LIST = {
-  { name = "MASTER",       description = "Cluster UI and coordinator" },
-  { name = "REACTOR",      description = "Controls the main reactor node" },
-  { name = "ENERGY",       description = "Manages power transfer" },
-  { name = "FUEL",         description = "Handles fuel processing" },
-  { name = "REPROCESSING", description = "Supervises reprocessing" },
+  { name = "MASTER",       description = "Master UI" },
+  { name = "REACTOR",      description = "Reactor + Turbine Node" },
+  { name = "ENERGY",       description = "Energy Node" },
+  { name = "FUEL",         description = "Fuel Node" },
+  { name = "REPROCESSING", description = "Reprocessing Node" },
 }
 
 local REQUIRED_MASTER_FILES = {
@@ -73,43 +80,43 @@ local EMBEDDED_MANIFEST = {
 
   files = {
     -- Shared
-    { src = "src/shared/text.lua",              dst = "/xreactor/shared/text.lua" },
-    { src = "src/shared/protocol.lua",           dst = "/xreactor/shared/protocol.lua" },
-    { src = "src/shared/identity.lua",           dst = "/xreactor/shared/identity.lua" },
-    { src = "src/shared/log.lua",                dst = "/xreactor/shared/log.lua" },
-    { src = "src/shared/topbar.lua",             dst = "/xreactor/shared/topbar.lua" },
-    { src = "src/shared/network_dispatcher.lua", dst = "/xreactor/shared/network_dispatcher.lua" },
-    { src = "src/shared/node_state_machine.lua", dst = "/xreactor/shared/node_state_machine.lua" },
-    { src = "src/shared/node_runtime.lua",       dst = "/xreactor/shared/node_runtime.lua" },
-    { src = "src/shared/local_state_store.lua",  dst = "/xreactor/shared/local_state_store.lua" },
-    { src = "xreactor/shared/gui.lua",           dst = "/xreactor/shared/gui.lua" },
+    { src = "src/shared/text.lua",              dst = "/xreactor/shared/text.lua",              size = 355 },
+    { src = "src/shared/protocol.lua",           dst = "/xreactor/shared/protocol.lua",         size = 4603 },
+    { src = "src/shared/identity.lua",           dst = "/xreactor/shared/identity.lua",         size = 1408 },
+    { src = "src/shared/log.lua",                dst = "/xreactor/shared/log.lua",              size = 1169 },
+    { src = "src/shared/topbar.lua",             dst = "/xreactor/shared/topbar.lua",           size = 3639 },
+    { src = "src/shared/network_dispatcher.lua", dst = "/xreactor/shared/network_dispatcher.lua", size = 4917 },
+    { src = "src/shared/node_state_machine.lua", dst = "/xreactor/shared/node_state_machine.lua", size = 1880 },
+    { src = "src/shared/node_runtime.lua",       dst = "/xreactor/shared/node_runtime.lua",     size = 8810 },
+    { src = "src/shared/local_state_store.lua",  dst = "/xreactor/shared/local_state_store.lua", size = 1856 },
+    { src = "xreactor/shared/gui.lua",           dst = "/xreactor/shared/gui.lua",              size = 12411 },
 
     -- Node Core
-    { src = "src/node/node_core.lua",            dst = "/xreactor/node/node_core.lua" },
+    { src = "src/node/node_core.lua",            dst = "/xreactor/node/node_core.lua",          size = 14745 },
 
     -- Master UI
-    { src = "src/master/master_core.lua",        dst = "/xreactor/master/master_core.lua" },
-    { src = "src/master/master_model.lua",       dst = "/xreactor/master/master_model.lua" },
-    { src = "src/master/master_home.lua",        dst = "/xreactor/master/master_home.lua" },
-    { src = "src/master/fuel_panel.lua",         dst = "/xreactor/master/fuel_panel.lua" },
-    { src = "src/master/waste_panel.lua",        dst = "/xreactor/master/waste_panel.lua" },
-    { src = "src/master/alarm_center.lua",       dst = "/xreactor/master/alarm_center.lua" },
-    { src = "src/master/alarm_panel.lua",        dst = "/xreactor/master/alarm_panel.lua" },
-    { src = "src/master/overview_panel.lua",     dst = "/xreactor/master/overview_panel.lua" },
+    { src = "src/master/master_core.lua",        dst = "/xreactor/master/master_core.lua",      size = 6697 },
+    { src = "src/master/master_model.lua",       dst = "/xreactor/master/master_model.lua",     size = 23156 },
+    { src = "src/master/master_home.lua",        dst = "/xreactor/master/master_home.lua",      size = 13670 },
+    { src = "src/master/fuel_panel.lua",         dst = "/xreactor/master/fuel_panel.lua",       size = 3363 },
+    { src = "src/master/waste_panel.lua",        dst = "/xreactor/master/waste_panel.lua",      size = 3250 },
+    { src = "src/master/alarm_center.lua",       dst = "/xreactor/master/alarm_center.lua",     size = 5753 },
+    { src = "src/master/alarm_panel.lua",        dst = "/xreactor/master/alarm_panel.lua",      size = 4994 },
+    { src = "src/master/overview_panel.lua",     dst = "/xreactor/master/overview_panel.lua",   size = 5574 },
 
     -- Tools & UI Map
-    { src = "src/ui_map.lua",                     dst = "/xreactor/ui_map.lua" },
-    { src = "src/tools/build_ui_map.lua",         dst = "/xreactor/tools/build_ui_map.lua" },
-    { src = "src/tools/self_test.lua",            dst = "/xreactor/tools/self_test.lua" },
+    { src = "src/ui_map.lua",                     dst = "/xreactor/ui_map.lua",                  size = 571 },
+    { src = "src/tools/build_ui_map.lua",         dst = "/xreactor/tools/build_ui_map.lua",      size = 2872 },
+    { src = "src/tools/self_test.lua",            dst = "/xreactor/tools/self_test.lua",         size = 1570 },
 
     -- Universal Autostart
-    { src = "startup.lua",                        dst = "/startup.lua" },
+    { src = "startup.lua",                        dst = "/startup.lua",                           size = 45 },
 
     -- Node Runtimes
-    { src = "src/node/reactor_node.lua",          dst = "/xreactor/node/reactor_node.lua" },
-    { src = "src/node/fuel_node.lua",             dst = "/xreactor/node/fuel_node.lua" },
-    { src = "src/node/reprocessing_node.lua",     dst = "/xreactor/node/reprocessing_node.lua" },
-    { src = "src/node/energy_node.lua",           dst = "/xreactor/node/energy_node.lua" },
+    { src = "src/node/reactor_node.lua",          dst = "/xreactor/node/reactor_node.lua",       size = 11157 },
+    { src = "src/node/fuel_node.lua",             dst = "/xreactor/node/fuel_node.lua",          size = 6278 },
+    { src = "src/node/reprocessing_node.lua",     dst = "/xreactor/node/reprocessing_node.lua",  size = 2453 },
+    { src = "src/node/energy_node.lua",           dst = "/xreactor/node/energy_node.lua",        size = 6166 },
   },
 }
 
@@ -131,7 +138,7 @@ end
 
 local SAFETY_MARGIN_BYTES = 1024
 local MIN_PROBE_SIZE = 1024
-local DOWNLOAD_CHUNK_SIZE = 16 * 1024
+local DOWNLOAD_CHUNK_SIZE = 2048
 
 local function ensure_directory(path)
   local dir = fs.getDir(path)
@@ -195,7 +202,14 @@ local function write_file(path, reader, expected_size)
   while true do
     local chunk = reader()
     if not chunk then break end
-    handle.write(chunk)
+
+    if #chunk > DOWNLOAD_CHUNK_SIZE then
+      for piece in chunk:gmatch(".{1," .. DOWNLOAD_CHUNK_SIZE .. "}") do
+        handle.write(piece)
+      end
+    else
+      handle.write(chunk)
+    end
   end
 
   handle.close()
@@ -222,7 +236,12 @@ local function load_manifest()
     if not file.src or not file.dst then
       return nil, "Installer manifest contains an invalid file entry"
     end
-    table.insert(manifest.files, { src = file.src, dst = file.dst })
+
+    if type(file.size) ~= "number" or file.size <= 0 then
+      return nil, "Installer manifest missing size for " .. tostring(file.src)
+    end
+
+    table.insert(manifest.files, { src = file.src, dst = file.dst, size = file.size })
   end
 
   return manifest
@@ -284,13 +303,11 @@ local function probe_remote_size(base_url, src)
   return nil
 end
 
-local function download_file(base_url, src, dst)
-  local expected_size = probe_remote_size(base_url, src) or MIN_PROBE_SIZE
-  local existing_size = (fs.exists(dst) and fs.getSize and fs.getSize(dst)) or 0
-  local required = math.max(expected_size - existing_size, 0) + SAFETY_MARGIN_BYTES
-  local space_ok, space_err = ensure_free_space(required, "downloading " .. dst)
-  if not space_ok then
-    return nil, space_err
+local function download_file(base_url, src, dst, expected_size)
+  local required_bytes = math.max(expected_size or MIN_PROBE_SIZE, MIN_PROBE_SIZE) + SAFETY_MARGIN_BYTES
+  local free = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+  if free and free < required_bytes then
+    return nil, "Insufficient disk space: need " .. required_bytes
   end
 
   local url = string.format("%s/%s", base_url, src)
@@ -309,18 +326,26 @@ local function download_file(base_url, src, dst)
   end
 
   local headers = (handle.getResponseHeaders and handle.getResponseHeaders()) or {}
-  local expected_size = tonumber(headers["Content-Length"] or headers["content-length"])
+  local content_size = tonumber(headers["Content-Length"] or headers["content-length"]) or expected_size
+
+  local tmp_path = dst .. ".tmp"
+  if fs.exists(tmp_path) then fs.delete(tmp_path) end
 
   local function reader()
     return handle.read(DOWNLOAD_CHUNK_SIZE)
   end
 
-  local ok, write_err = write_file(dst, reader, expected_size)
+  local ok, write_err = write_file(tmp_path, reader, content_size)
   handle.close()
 
   if not ok then
+    fs.delete(tmp_path)
     return nil, write_err
   end
+
+  if fs.exists(dst) then fs.delete(dst) end
+  fs.move(tmp_path, dst)
+  fs.delete(tmp_path)
 
   return dst
 end
@@ -357,10 +382,8 @@ local function calculate_required_space(manifest, opts)
 
   for _, file in ipairs(manifest.files) do
     if not skip[file.dst] then
-      local remote_size = probe_remote_size(manifest.base_url, file.src) or MIN_PROBE_SIZE
-      local existing_size = (fs.exists(file.dst) and fs.getSize and fs.getSize(file.dst)) or 0
-      local additional_needed = math.max(remote_size - existing_size, 0)
-      total = total + additional_needed
+      local size = tonumber(file.size) or MIN_PROBE_SIZE
+      total = total + size
     end
   end
 
@@ -371,15 +394,35 @@ local function install_from_manifest(manifest, opts)
   opts = opts or {}
   local skip = opts.skip or {}
   local updated = {}
+  local downloaded = {}
+
+  local required_space = calculate_required_space(manifest, { skip = skip })
+  local free = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+  if free and free < required_space then
+    return nil, "Insufficient disk space: need " .. required_space .. " bytes (have " .. tostring(free) .. ")", updated
+  end
 
   for _, file in ipairs(manifest.files) do
+    local expected_size = tonumber(file.size) or MIN_PROBE_SIZE
+
     if skip[file.dst] then
       -- Preserve user-managed files during update
+    elseif downloaded[file.dst] then
+      -- Avoid downloading the same destination twice
+    elseif fs.exists(file.dst) and fs.getSize and fs.getSize(file.dst) == expected_size then
+      downloaded[file.dst] = true
     else
-      local path, err = download_file(manifest.base_url, file.src, file.dst)
+      local free_now = fs.getFreeSpace and fs.getFreeSpace("/") or nil
+      local required = expected_size + SAFETY_MARGIN_BYTES
+      if free_now and free_now < required then
+        return nil, "Insufficient disk space: need " .. required .. " bytes (have " .. tostring(free_now) .. ")", updated
+      end
+
+      local path, err = download_file(manifest.base_url, file.src, file.dst, expected_size)
       if not path then
         return nil, err, updated
       end
+      downloaded[file.dst] = true
       table.insert(updated, path)
     end
   end
@@ -390,6 +433,15 @@ end
 local function build_role_targets(manifest)
   local targets = {}
   local missing = {}
+
+  for _, file in ipairs(manifest.files) do
+    if FORBIDDEN_NODE_PATHS[file.src] then
+      return nil, FORBIDDEN_NODE_PATHS[file.src]
+    end
+    if FORBIDDEN_NODE_PATHS[file.dst] then
+      return nil, FORBIDDEN_NODE_PATHS[file.dst]
+    end
+  end
 
   for role, src in pairs(ROLE_SOURCE_FILES) do
     local found
@@ -421,6 +473,12 @@ end
 
 local function verify_role_targets(role_targets)
   local missing = {}
+
+  for forbidden, reason in pairs(FORBIDDEN_NODE_PATHS) do
+    if fs.exists(forbidden) then
+      table.insert(missing, reason)
+    end
+  end
 
   for role, expected in pairs(ROLE_EXPECTED_TARGETS) do
     local path = role_targets[role]
@@ -571,15 +629,24 @@ end
 
 local function resolve_target(role_name, role_targets)
   local target = role_targets[role_name]
+  local expected = ROLE_EXPECTED_TARGETS[role_name]
+
   if type(target) ~= "string" or target == "" then
     return nil, "No destination recorded for role: " .. tostring(role_name)
   end
-  if not fs.exists(target) then
-    return nil, "Startup target missing: " .. target
+  if expected and target ~= expected then
+    return nil, string.format("Unexpected target for %s: %s (expected %s)", role_name, target, expected)
+  end
+  if target:match("^/rom") then
+    return nil, "Startup target must be writable; refusing to use ROM location: " .. target
   end
   if not target:match("^/") then
     return nil, "Startup target must be an absolute path: " .. tostring(target)
   end
+  if not fs.exists(target) then
+    return nil, "Startup target missing: " .. target
+  end
+
   return target
 end
 
@@ -589,7 +656,9 @@ local function purge_secondary_startup_files()
   local function walk(path)
     for _, name in ipairs(fs.list(path)) do
       local child = fs.combine(path, name)
-      if name == "startup.lua" and child ~= startup_path then
+      if child:match("^/rom") then
+        -- Treat ROM as strictly read-only; never touch or traverse it.
+      elseif name == "startup.lua" and child ~= startup_path then
         fs.delete(child)
       elseif fs.isDir(child) then
         walk(child)
@@ -601,16 +670,22 @@ local function purge_secondary_startup_files()
 end
 
 local function write_startup(role_name, target)
-  if role_name ~= "REACTOR" then
-    return nil, "Installer autostart is restricted to the REACTOR role"
+  local expected = ROLE_EXPECTED_TARGETS[role_name]
+
+  if not expected then
+    return nil, "Unknown role: " .. tostring(role_name)
   end
 
-  if target ~= REACTOR_STARTUP_TARGET then
-    return nil, "Reactor startup target mismatch: " .. tostring(target)
+  if target ~= expected then
+    return nil, string.format("Startup target mismatch for %s: %s (expected %s)", role_name, tostring(target), expected)
   end
 
   if type(target) ~= "string" or target == "" then
     return nil, "Invalid startup target"
+  end
+
+  if target:match("^/rom") then
+    return nil, "Startup target must be writable; refusing to use ROM location: " .. target
   end
 
   if not target:match("^/") then
@@ -624,28 +699,38 @@ local function write_startup(role_name, target)
   purge_secondary_startup_files()
 
   local startup_path = get_startup_path()
+  if fs.exists("/rom/startup.lua") then
+    -- Never open or modify ROM startup; it is read-only and must be ignored.
+  end
 
   local handle = fs.open(startup_path, "w")
   if not handle then
-    error("Cannot open " .. startup_path .. " for writing")
+    return nil, "Cannot open /startup.lua for writing; access denied"
   end
-  handle.write(REACTOR_STARTUP_CONTENT)
+
+  handle.write(build_startup_content(target))
   handle.close()
 
   return true
 end
 
 local function verify_startup_file(role_name, target)
-  if role_name ~= "REACTOR" then
-    return false, "Startup verification is restricted to the REACTOR role"
+  local expected = ROLE_EXPECTED_TARGETS[role_name]
+
+  if not expected then
+    return false, "Unknown role: " .. tostring(role_name)
   end
 
-  if target ~= REACTOR_STARTUP_TARGET then
-    return false, "Reactor startup target mismatch: " .. tostring(target)
+  if target ~= expected then
+    return false, string.format("Startup target mismatch for %s: %s (expected %s)", role_name, tostring(target), expected)
   end
 
   if type(target) ~= "string" or target == "" then
     return false, "Invalid startup target"
+  end
+
+  if target:match("^/rom") then
+    return false, "Startup target must be writable; refusing to use ROM location: " .. target
   end
 
   if not target:match("^/") then
@@ -657,7 +742,6 @@ local function verify_startup_file(role_name, target)
   end
 
   local startup_path = get_startup_path()
-
   local handle = fs.open(startup_path, "r")
   if not handle then
     return false, "Unable to read " .. startup_path .. " after writing"
@@ -666,19 +750,31 @@ local function verify_startup_file(role_name, target)
   local content = handle.readAll() or ""
   handle.close()
 
-  if content ~= REACTOR_STARTUP_CONTENT then
-    return false, "startup.lua must contain exactly: " .. REACTOR_STARTUP_CONTENT
+  if content ~= build_startup_content(target) then
+    return false, "startup.lua must contain exactly: shell.run(\"" .. target .. "\")"
   end
 
   return true
 end
 
-local function verify_reactor_startup(target)
-  return verify_startup_file("REACTOR", target)
-end
-
 local function configure_startup_for_role(role_targets)
-  local target, err = resolve_target("REACTOR", role_targets)
+  local choice
+
+  while true do
+    choice = select_role_from_menu()
+    if confirm_role(choice, role_targets) then break end
+  end
+
+  if choice.name == "MASTER" and not is_advanced_computer() then
+    term.clear()
+    center_print(2, "MASTER role requires an Advanced Computer.")
+    center_print(4, "Install on an Advanced Computer and retry.")
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return false
+  end
+
+  local target, err = resolve_target(choice.name, role_targets)
   if not target then
     term.clear()
     center_print(2, "Cannot configure startup.")
@@ -688,7 +784,7 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  local wrote, write_err = write_startup("REACTOR", target)
+  local wrote, write_err = write_startup(choice.name, target)
   if not wrote then
     term.clear()
     center_print(2, "Failed to write startup.lua.")
@@ -698,7 +794,7 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  local ok, verify_err = verify_startup_file("REACTOR", target)
+  local ok, verify_err = verify_startup_file(choice.name, target)
   if not ok then
     term.clear()
     center_print(2, "Autostart verification failed.")
@@ -710,7 +806,7 @@ local function configure_startup_for_role(role_targets)
 
   term.clear()
   term.setCursorPos(1, 2)
-  center_print(2, "Startup configured for REACTOR role.")
+  center_print(2, "Startup configured for role: " .. choice.name)
   center_print(4, "Target file: " .. target)
   center_print(6, "Reboot the computer to launch the selected role.")
   center_print(8, "Installer will now exit.")
@@ -802,7 +898,6 @@ local function installer_self_check()
     draw_menu = draw_menu,
     select_mode = select_mode,
     verify_startup_file = verify_startup_file,
-    verify_reactor_startup = verify_reactor_startup,
     safe_term_write = safe_term_write,
     safe_print = safe_print,
     wait_for_key = wait_for_key,
@@ -833,6 +928,16 @@ local function main()
     term.clear()
     center_print(2, "Cannot read installer manifest.")
     center_print(4, manifest_err)
+    center_print(6, "Press any key to exit.")
+    wait_for_key()
+    return
+  end
+
+  local manifest_role_targets, manifest_role_err = build_role_targets(manifest)
+  if not manifest_role_targets then
+    term.clear()
+    center_print(2, "Installer manifest invalid for roles.")
+    center_print(4, manifest_role_err)
     center_print(6, "Press any key to exit.")
     wait_for_key()
     return
@@ -875,17 +980,7 @@ local function main()
       return
     end
 
-    local targets, role_targets_err = build_role_targets(manifest)
-    if not targets then
-      term.clear()
-      center_print(2, "Installer manifest invalid for roles.")
-      center_print(4, role_targets_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return
-    end
-
-    local targets_ok, targets_err = verify_role_targets(targets)
+    local targets_ok, targets_err = verify_role_targets(manifest_role_targets)
     if not targets_ok then
       term.clear()
       center_print(2, "Role targets missing after update.")
@@ -895,7 +990,7 @@ local function main()
       return
     end
 
-    role_targets = targets
+    role_targets = manifest_role_targets
   else
     local required_space = calculate_required_space(manifest, { skip = skip_files })
     local has_space, space_err = ensure_free_space(required_space, "installation")
@@ -928,17 +1023,7 @@ local function main()
       return
     end
 
-    local targets, role_targets_err = build_role_targets(manifest)
-    if not targets then
-      term.clear()
-      center_print(2, "Installer manifest invalid for roles.")
-      center_print(4, role_targets_err)
-      center_print(6, "Press any key to exit.")
-      wait_for_key()
-      return
-    end
-
-    local targets_ok, targets_err = verify_role_targets(targets)
+    local targets_ok, targets_err = verify_role_targets(manifest_role_targets)
     if not targets_ok then
       term.clear()
       center_print(2, "Role targets missing after installation.")
@@ -948,7 +1033,7 @@ local function main()
       return
     end
 
-    role_targets = targets
+    role_targets = manifest_role_targets
   end
 
   local configured = configure_startup_for_role(role_targets)
