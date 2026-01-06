@@ -31,10 +31,6 @@ local ROLE_EXPECTED_TARGETS = {
 
 local STARTUP_PATH = "/startup.lua"
 
-local function build_startup_content(target)
-  return 'shell.run("' .. target .. '")'
-end
-
 local ROLE_LIST = {
   { name = "MASTER",       description = "Master UI" },
   { name = "REACTOR",      description = "Reactor + Turbine Node" },
@@ -160,26 +156,19 @@ local function ensure_free_space(required, context)
   return true
 end
 
-local function get_startup_path()
-  local path = STARTUP_PATH
+local function startup_content(target)
+  return 'shell.run("' .. target .. '")'
+end
 
-  if type(path) ~= "string" or path == "" then
-    error("Startup path is invalid")
+local function writeStartup(targetPath)
+  assert(type(targetPath) == "string" and targetPath:sub(1, 1) == "/", "invalid targetPath")
+  if not fs.exists(targetPath) then
+    error("Startup target missing: " .. targetPath)
   end
-
-  if not path:match("^/") then
-    error("Startup path must be absolute: " .. tostring(path))
-  end
-
-  if path ~= "/startup.lua" then
-    error("Startup path must be /startup.lua (got " .. tostring(path) .. ")")
-  end
-
-  if path:match("^/rom") then
-    error("Startup path must be writable; refusing to use ROM location: " .. path)
-  end
-
-  return path
+  if fs.exists(STARTUP_PATH) then fs.delete(STARTUP_PATH) end
+  local f = fs.open(STARTUP_PATH, "w")
+  f.write('shell.run("' .. targetPath .. '")')
+  f.close()
 end
 
 local function write_file(path, reader, expected_size)
@@ -516,6 +505,8 @@ local function configure_startup_for_role(role_targets)
     if confirm_role(choice, role_targets) then break end
   end
 
+  assert(not fs.exists("/rom/startup.lua"), "ROM startup must never be touched")
+
   if choice.name == "MASTER" and not is_advanced_computer() then
     term.clear()
     center_print(2, "MASTER role requires an Advanced Computer.")
@@ -535,8 +526,8 @@ local function configure_startup_for_role(role_targets)
     return false
   end
 
-  local wrote, write_err = write_startup(choice.name, target)
-  if not wrote then
+  local ok, write_err = pcall(writeStartup, target)
+  if not ok then
     term.clear()
     center_print(2, "Failed to write startup.lua.")
     center_print(4, write_err)
@@ -650,68 +641,6 @@ local function resolve_target(role_name, role_targets)
   return target
 end
 
-local function purge_secondary_startup_files()
-  local startup_path = get_startup_path()
-
-  local function walk(path)
-    for _, name in ipairs(fs.list(path)) do
-      local child = fs.combine(path, name)
-      if child:match("^/rom") then
-        -- Treat ROM as strictly read-only; never touch or traverse it.
-      elseif name == "startup.lua" and child ~= startup_path then
-        fs.delete(child)
-      elseif fs.isDir(child) then
-        walk(child)
-      end
-    end
-  end
-
-  walk("/")
-end
-
-local function write_startup(role_name, target)
-  local expected = ROLE_EXPECTED_TARGETS[role_name]
-
-  if not expected then
-    return nil, "Unknown role: " .. tostring(role_name)
-  end
-
-  if target ~= expected then
-    return nil, string.format("Startup target mismatch for %s: %s (expected %s)", role_name, tostring(target), expected)
-  end
-
-  if type(target) ~= "string" or target == "" then
-    return nil, "Invalid startup target"
-  end
-
-  if target:match("^/rom") then
-    return nil, "Startup target must be writable; refusing to use ROM location: " .. target
-  end
-
-  if not target:match("^/") then
-    return nil, "Startup target must be an absolute path: " .. target
-  end
-
-  if not fs.exists(target) then
-    return nil, "Startup target missing: " .. target
-  end
-
-  purge_secondary_startup_files()
-
-  local startup_path = get_startup_path()
-  if fs.exists(startup_path) then fs.delete(startup_path) end
-
-  local handle = fs.open(startup_path, "w")
-  if not handle then
-    return nil, "Cannot open /startup.lua for writing; access denied"
-  end
-
-  handle.write(build_startup_content(target))
-  handle.close()
-
-  return true
-end
-
 local function verify_startup_file(role_name, target)
   local expected = ROLE_EXPECTED_TARGETS[role_name]
 
@@ -739,83 +668,23 @@ local function verify_startup_file(role_name, target)
     return false, "Startup target missing: " .. target
   end
 
-  local startup_path = get_startup_path()
-  local handle = fs.open(startup_path, "r")
+  local handle = fs.open(STARTUP_PATH, "r")
   if not handle then
-    return false, "Unable to read " .. startup_path .. " after writing"
+    return false, "Unable to read " .. STARTUP_PATH .. " after writing"
   end
 
   local content = handle.readAll() or ""
   handle.close()
 
-  if content ~= build_startup_content(target) then
+  if content ~= startup_content(target) then
     return false, "startup.lua must contain exactly: shell.run(\"" .. target .. "\")"
   end
 
   return true
 end
 
-local function configure_startup_for_role(role_targets)
-  local choice
-
-  while true do
-    choice = select_role_from_menu()
-    if confirm_role(choice, role_targets) then break end
-  end
-
-  if choice.name == "MASTER" and not is_advanced_computer() then
-    term.clear()
-    center_print(2, "MASTER role requires an Advanced Computer.")
-    center_print(4, "Install on an Advanced Computer and retry.")
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return false
-  end
-
-  local target, err = resolve_target(choice.name, role_targets)
-  if not target then
-    term.clear()
-    center_print(2, "Cannot configure startup.")
-    center_print(4, err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return false
-  end
-
-  local wrote, write_err = write_startup(choice.name, target)
-  if not wrote then
-    term.clear()
-    center_print(2, "Failed to write startup.lua.")
-    center_print(4, write_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return false
-  end
-
-  local ok, verify_err = verify_startup_file(choice.name, target)
-  if not ok then
-    term.clear()
-    center_print(2, "Autostart verification failed.")
-    center_print(4, verify_err)
-    center_print(6, "Press any key to exit.")
-    wait_for_key()
-    return false
-  end
-
-  term.clear()
-  term.setCursorPos(1, 2)
-  center_print(2, "Startup configured for role: " .. choice.name)
-  center_print(4, "Target file: " .. target)
-  center_print(6, "Reboot the computer to launch the selected role.")
-  center_print(8, "Installer will now exit.")
-
-  return true
-end
-
 local function detect_existing_installation(manifest)
-  local startup_path = get_startup_path()
-
-  if fs.exists("/xreactor") or fs.exists(startup_path) then
+  if fs.exists("/xreactor") or fs.exists(STARTUP_PATH) then
     return true
   end
 
@@ -887,7 +756,7 @@ local function installer_self_check()
     install_from_manifest = install_from_manifest,
     calculate_required_space = calculate_required_space,
     detect_existing_installation = detect_existing_installation,
-    write_startup = write_startup,
+    writeStartup = writeStartup,
     build_role_targets = build_role_targets,
     select_role_from_menu = select_role_from_menu,
     confirm_role = confirm_role,
@@ -913,7 +782,7 @@ local function installer_self_check()
 end
 
 local function main()
-  local startup_path = get_startup_path()
+  local startup_path = STARTUP_PATH
   term.setCursorBlink(false)
 
   local ok, self_check_err = installer_self_check()
