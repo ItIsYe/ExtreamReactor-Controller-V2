@@ -16,6 +16,11 @@ local ROLE_SOURCE_FILES = {
   REPROCESSING  = "src/node/reprocessing_node.lua",
 }
 
+local FORBIDDEN_NODE_PATHS = {
+  ["src/node/turbine_node.lua"]       = "Turbine control is handled by reactor_node.lua; remove turbine_node.lua",
+  ["/xreactor/node/turbine_node.lua"] = "Turbine control must be driven by reactor_node.lua; turbine_node.lua is not supported",
+}
+
 local ROLE_EXPECTED_TARGETS = {
   MASTER        = "/xreactor/master/master_home.lua",
   REACTOR       = "/xreactor/node/reactor_node.lua",
@@ -32,7 +37,7 @@ end
 
 local ROLE_LIST = {
   { name = "MASTER",       description = "Master UI" },
-  { name = "REACTOR",      description = "Reactor Node" },
+  { name = "REACTOR",      description = "Reactor + Turbine Node" },
   { name = "ENERGY",       description = "Energy Node" },
   { name = "FUEL",         description = "Fuel Node" },
   { name = "REPROCESSING", description = "Reprocessing Node" },
@@ -393,6 +398,15 @@ local function build_role_targets(manifest)
   local targets = {}
   local missing = {}
 
+  for _, file in ipairs(manifest.files) do
+    if FORBIDDEN_NODE_PATHS[file.src] then
+      return nil, FORBIDDEN_NODE_PATHS[file.src]
+    end
+    if FORBIDDEN_NODE_PATHS[file.dst] then
+      return nil, FORBIDDEN_NODE_PATHS[file.dst]
+    end
+  end
+
   for role, src in pairs(ROLE_SOURCE_FILES) do
     local found
     for _, file in ipairs(manifest.files) do
@@ -423,6 +437,12 @@ end
 
 local function verify_role_targets(role_targets)
   local missing = {}
+
+  for forbidden, reason in pairs(FORBIDDEN_NODE_PATHS) do
+    if fs.exists(forbidden) then
+      table.insert(missing, reason)
+    end
+  end
 
   for role, expected in pairs(ROLE_EXPECTED_TARGETS) do
     local path = role_targets[role]
